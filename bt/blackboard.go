@@ -72,7 +72,7 @@ func MustGet[T any](b *Blackboard, key string) T {
 }
 
 // coerceNumeric 在数值类型之间互转。
-// float→int 仅接受整值（无小数部分），拒绝 NaN/Inf/非整值浮点。
+// float→int 需同时满足：整值（无小数）且在目标类型可表示范围内。
 func coerceNumeric[T any](val any) (T, bool) {
 	var zero T
 	f, ok := asFloat64(val)
@@ -81,19 +81,19 @@ func coerceNumeric[T any](val any) (T, bool) {
 	}
 	switch p := any(&zero).(type) {
 	case *int:
-		if !isIntegral(f) {
+		if !fitsInt(f, math.MinInt, math.MaxInt) {
 			return zero, false
 		}
 		*p = int(f)
 		return zero, true
 	case *int32:
-		if !isIntegral(f) {
+		if !fitsInt(f, math.MinInt32, math.MaxInt32) {
 			return zero, false
 		}
 		*p = int32(f)
 		return zero, true
 	case *int64:
-		if !isIntegral(f) {
+		if !fitsInt(f, math.MinInt64, math.MaxInt64) {
 			return zero, false
 		}
 		*p = int64(f)
@@ -108,11 +108,15 @@ func coerceNumeric[T any](val any) (T, bool) {
 	return zero, false
 }
 
-func isIntegral(f float64) bool {
+// fitsInt 检查 f 是否为整值且在 [min, max] 范围内。
+func fitsInt(f float64, min, max int64) bool {
 	if math.IsNaN(f) || math.IsInf(f, 0) {
 		return false
 	}
-	return f == math.Trunc(f)
+	if f != math.Trunc(f) {
+		return false
+	}
+	return f >= float64(min) && f <= float64(max)
 }
 
 func asFloat64(v any) (float64, bool) {

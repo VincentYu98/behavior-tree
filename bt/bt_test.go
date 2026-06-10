@@ -2,6 +2,7 @@ package bt
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 )
 
@@ -142,7 +143,7 @@ func TestReactiveSequence_ConditionFails(t *testing.T) {
 
 // ==================== Repeater ====================
 
-func TestRepeater_ResetsChildBetweenIterations(t *testing.T) {
+func TestRepeater_ResetsChildEveryIteration(t *testing.T) {
 	ctx := testCtx()
 	resetCount := 0
 	child := NewActionWithReset("c", func(_ *Context) Status {
@@ -150,30 +151,34 @@ func TestRepeater_ResetsChildBetweenIterations(t *testing.T) {
 	}, func(_ *Context) { resetCount++ })
 
 	NewRepeater(3, child).Tick(ctx)
-	// Reset between iter 0→1 and 1→2, NOT after last
-	if resetCount != 2 {
-		t.Fatalf("want 2 resets (between iterations), got %d", resetCount)
+	// 每轮 Success 后都 Reset，包括最后一轮
+	if resetCount != 3 {
+		t.Fatalf("want 3 resets (every iteration), got %d", resetCount)
 	}
 }
 
-func TestRepeater_PreservesLastIterationResults(t *testing.T) {
+func TestRepeater_BareReentryClean(t *testing.T) {
 	ctx := testCtx()
-	child := NewAction("c", func(ctx *Context) Status {
-		ctx.BB.Set("result", 42)
+	runCount := 0
+	child := NewActionWithReset("c", func(_ *Context) Status {
+		runCount++
 		return Success
+	}, func(_ *Context) {
+		runCount = 0
 	})
-	seq := NewSequence(
-		NewRepeater(2, child),
-		NewAction("read", func(ctx *Context) Status {
-			v, _ := Get[int](ctx.BB, "result")
-			if v != 42 {
-				return Failure
-			}
-			return Success
-		}),
-	)
-	if s := seq.Tick(ctx); s != Success {
-		t.Fatal("sibling should see Repeater's last iteration result")
+
+	rep := NewRepeater(2, child)
+
+	// 第一轮: 2次 Tick + 2次 Reset → runCount=0
+	rep.Tick(ctx)
+	if runCount != 0 {
+		t.Fatalf("after first run: want 0 (reset), got %d", runCount)
+	}
+
+	// 裸 re-entry（无父级）: 子树干净
+	rep.Tick(ctx)
+	if runCount != 0 {
+		t.Fatalf("after re-entry: want 0 (reset), got %d", runCount)
 	}
 }
 
@@ -540,22 +545,46 @@ func TestGet_RejectsNonIntegralFloat(t *testing.T) {
 	bb := NewBlackboard()
 
 	bb.Set("x", 3.9)
-	_, ok := Get[int](bb, "x")
-	if ok {
-		t.Fatal("3.9 → int should be rejected (non-integral)")
+	if _, ok := Get[int](bb, "x"); ok {
+		t.Fatal("3.9 → int should be rejected")
 	}
 
 	bb.Set("y", 3.0)
-	v, ok := Get[int](bb, "y")
-	if !ok || v != 3 {
-		t.Fatalf("3.0 → int should work: got %d %v", v, ok)
+	if v, ok := Get[int](bb, "y"); !ok || v != 3 {
+		t.Fatalf("3.0 → int: got %d %v", v, ok)
 	}
 
-	// float → float 不受限制
 	bb.Set("z", 3.9)
-	f, ok := Get[float64](bb, "z")
-	if !ok || f != 3.9 {
-		t.Fatalf("float64 → float64 should work: got %v %v", f, ok)
+	if f, ok := Get[float64](bb, "z"); !ok || f != 3.9 {
+		t.Fatalf("float64 direct: got %v %v", f, ok)
+	}
+}
+
+func TestGet_RejectsOutOfRangeFloat(t *testing.T) {
+	bb := NewBlackboard()
+
+	// 超出 int32 范围
+	bb.Set("big", 1e18)
+	if _, ok := Get[int32](bb, "big"); ok {
+		t.Fatal("1e18 → int32 should be rejected (out of range)")
+	}
+
+	// int64 范围内的大整值应该可以
+	bb.Set("ok", float64(1<<40))
+	if v, ok := Get[int64](bb, "ok"); !ok || v != 1<<40 {
+		t.Fatalf("2^40 → int64: got %d %v", v, ok)
+	}
+
+	// NaN
+	bb.Set("nan", math.NaN())
+	if _, ok := Get[int](bb, "nan"); ok {
+		t.Fatal("NaN → int should be rejected")
+	}
+
+	// Inf
+	bb.Set("inf", math.Inf(1))
+	if _, ok := Get[int](bb, "inf"); ok {
+		t.Fatal("Inf → int should be rejected")
 	}
 }
 
