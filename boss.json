@@ -1,0 +1,155 @@
+{
+  "type": "selector",
+  "name": "炎魔将军AI",
+  "children": [
+    {
+      "type": "sequence",
+      "name": "Phase3_残血狂暴(HP<20%)",
+      "children": [
+        {"type": "condition", "key": "hp_percent", "op": "lt", "value": 20},
+        {"type": "action", "action": "enter_phase3"},
+        {
+          "type": "selector",
+          "name": "残血行为选择",
+          "children": [
+            {
+              "type": "sequence",
+              "name": "终极技能_蓄力多帧",
+              "children": [
+                {"type": "condition", "key": "ultimate_ready", "op": "eq", "value": true},
+                {"type": "action", "action": "cast_ultimate"}
+              ]
+            },
+            {
+              "type": "sequence",
+              "name": "逃跑回血",
+              "children": [
+                {"type": "condition", "key": "heal_ready", "op": "eq", "value": true},
+                {"type": "action", "action": "flee"},
+                {"type": "action", "action": "heal"}
+              ]
+            },
+            {
+              "type": "sequence",
+              "name": "狂暴连击",
+              "children": [
+                {"type": "condition", "key": "player_in_range", "op": "eq", "value": true},
+                {
+                  "type": "repeater",
+                  "count": 5,
+                  "child": {"type": "action", "action": "berserk_attack"}
+                }
+              ]
+            },
+            {"type": "action", "action": "flee"}
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sequence",
+      "name": "Phase2_狂暴阶段(HP<60%)",
+      "children": [
+        {"type": "condition", "key": "hp_percent", "op": "lt", "value": 60},
+        {"type": "action", "action": "enter_phase2"},
+        {
+          "type": "selector",
+          "name": "狂暴行为选择",
+          "children": [
+            {
+              "type": "sequence",
+              "name": "召唤小怪_只召一次",
+              "children": [
+                {"type": "condition", "key": "minions_summoned", "op": "eq", "value": false},
+                {"type": "action", "action": "summon_minions"}
+              ]
+            },
+            {
+              "type": "sequence",
+              "name": "火焰风暴",
+              "children": [
+                {"type": "condition", "key": "fire_storm_ready", "op": "eq", "value": true},
+                {"type": "condition", "key": "player_in_range", "op": "eq", "value": true},
+                {"type": "action", "action": "fire_storm"}
+              ]
+            },
+            {
+              "type": "sequence",
+              "name": "冲锋",
+              "children": [
+                {"type": "condition", "key": "player_detected", "op": "eq", "value": true},
+                {
+                  "type": "inverter",
+                  "child": {"type": "condition", "key": "player_in_range", "op": "eq", "value": true}
+                },
+                {"type": "action", "action": "charge"}
+              ]
+            },
+            {
+              "type": "sequence",
+              "name": "强化连击",
+              "children": [
+                {"type": "condition", "key": "player_in_range", "op": "eq", "value": true},
+                {
+                  "type": "repeater",
+                  "count": 4,
+                  "child": {"type": "action", "action": "enhanced_attack"}
+                },
+                {"type": "action", "action": "war_cry"}
+              ]
+            },
+            {"type": "action", "action": "patrol"}
+          ]
+        }
+      ]
+    },
+    {
+      "type": "sequence",
+      "name": "Phase1_正常战斗(HP>=60%)",
+      "children": [
+        {"type": "action", "action": "enter_phase1"},
+        {
+          "type": "selector",
+          "name": "正常行为选择",
+          "children": [
+            {
+              "type": "sequence",
+              "name": "火球术",
+              "children": [
+                {"type": "condition", "key": "fireball_ready", "op": "eq", "value": true},
+                {"type": "condition", "key": "player_detected", "op": "eq", "value": true},
+                {"type": "action", "action": "fireball"}
+              ]
+            },
+            {
+              "type": "sequence",
+              "name": "追击",
+              "children": [
+                {"type": "condition", "key": "player_detected", "op": "eq", "value": true},
+                {
+                  "type": "inverter",
+                  "child": {"type": "condition", "key": "player_in_range", "op": "eq", "value": true}
+                },
+                {"type": "action", "action": "chase"}
+              ]
+            },
+            {
+              "type": "sequence",
+              "name": "普通连击",
+              "children": [
+                {"type": "condition", "key": "player_in_range", "op": "eq", "value": true},
+                {
+                  "type": "repeater",
+                  "count": 3,
+                  "child": {"type": "action", "action": "attack"}
+                },
+                {"type": "action", "action": "backstep"}
+              ]
+            },
+            {"type": "action", "action": "patrol"}
+          ]
+        }
+      ]
+    }
+  ]
+}
