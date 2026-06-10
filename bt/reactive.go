@@ -2,28 +2,21 @@ package bt
 
 // ReactiveSelector 响应式选择器
 //
-// 和普通 Selector 的区别：每次 Tick 都从第一个子节点重新评估
-// 如果更高优先级的分支变为可用，会抢占（Reset）正在运行的低优先级分支
-//
-// 典型场景：
-//   子节点按优先级排列 [眩晕处理, 紧急闪避, 正常战斗]
-//   Boss 正在战斗(子节点2)，突然被眩晕 → 子节点0 命中
-//   → Reset 子节点2（中止战斗），切换到子节点0（播放眩晕动画）
+// 每帧从 child[0] 重新评估。高优先级分支变为可用时，Reset 正在 Running 的低优先级分支。
 type ReactiveSelector struct {
 	children   []Node
-	runningIdx int // 上一帧哪个子节点在 Running
+	runningIdx int
 }
 
 func NewReactiveSelector(children ...Node) *ReactiveSelector {
 	return &ReactiveSelector{children: children, runningIdx: -1}
 }
 
-func (rs *ReactiveSelector) Tick() Status {
+func (rs *ReactiveSelector) Tick(ctx *Context) Status {
 	for i, child := range rs.children {
-		status := child.Tick()
+		status := child.Tick(ctx)
 		switch status {
 		case Success:
-			// 如果之前有别的子节点在 Running，重置它
 			if rs.runningIdx >= 0 && rs.runningIdx != i {
 				rs.children[rs.runningIdx].Reset()
 			}
@@ -36,7 +29,6 @@ func (rs *ReactiveSelector) Tick() Status {
 			rs.runningIdx = i
 			return Running
 		}
-		// Failure: 继续尝试下一个
 	}
 	if rs.runningIdx >= 0 {
 		rs.children[rs.runningIdx].Reset()
@@ -46,6 +38,55 @@ func (rs *ReactiveSelector) Tick() Status {
 }
 
 func (rs *ReactiveSelector) Reset() {
+	if rs.runningIdx >= 0 {
+		rs.children[rs.runningIdx].Reset()
+	}
+	rs.runningIdx = -1
+	for _, child := range rs.children {
+		child.Reset()
+	}
+}
+
+// ReactiveSequence 响应式顺序节点
+//
+// 每帧从 child[0] 重新评估。前置条件失效时，Reset 正在 Running 的后续子节点。
+// 典型用途：Sequence [条件: 玩家在范围, 行为: 攻击]
+//   攻击 Running 时如果玩家离开范围，条件 Failure → Reset 攻击 → 整体 Failure。
+type ReactiveSequence struct {
+	children   []Node
+	runningIdx int
+}
+
+func NewReactiveSequence(children ...Node) *ReactiveSequence {
+	return &ReactiveSequence{children: children, runningIdx: -1}
+}
+
+func (rs *ReactiveSequence) Tick(ctx *Context) Status {
+	for i, child := range rs.children {
+		status := child.Tick(ctx)
+		switch status {
+		case Failure:
+			if rs.runningIdx >= 0 && rs.runningIdx != i {
+				rs.children[rs.runningIdx].Reset()
+			}
+			rs.runningIdx = -1
+			return Failure
+		case Running:
+			if rs.runningIdx >= 0 && rs.runningIdx != i {
+				rs.children[rs.runningIdx].Reset()
+			}
+			rs.runningIdx = i
+			return Running
+		}
+	}
+	if rs.runningIdx >= 0 {
+		rs.children[rs.runningIdx].Reset()
+	}
+	rs.runningIdx = -1
+	return Success
+}
+
+func (rs *ReactiveSequence) Reset() {
 	if rs.runningIdx >= 0 {
 		rs.children[rs.runningIdx].Reset()
 	}

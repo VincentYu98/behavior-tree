@@ -16,7 +16,8 @@ go run .
 
 ```
 游戏主循环（每帧）
-  EventBus.Clear()  →  EventBus.Emit(...)  →  Blackboard.Set(...)  →  tree.Tick()
+  ctx := &bt.Context{BB: bb, Bus: bus, Delta: dt}
+  EventBus.Clear()  →  EventBus.Emit(...)  →  Blackboard.Set(...)  →  tree.Tick(ctx)
 ```
 
 ### 节点类型
@@ -25,25 +26,26 @@ go run .
 
 | 节点 | 语义 | 说明 |
 |------|------|------|
-| `Sequence` | `&&` | 从左到右依次执行，全部成功才成功，任一失败则失败 |
-| `Selector` | `\|\|` | 从左到右依次尝试，任一成功则成功，全部失败才失败 |
-| `ReactiveSelector` | 响应式 `\|\|` | 每帧从头重新评估，高优先级分支可抢占低优先级 Running 分支 |
+| `Sequence` | `&&` (Memory) | 从左到右依次执行，Running 后从断点恢复 |
+| `Selector` | `\|\|` (Memory) | 从左到右依次尝试，Running 后从断点恢复 |
+| `ReactiveSelector` | 响应式 `\|\|` | 每帧从头重新评估，高优先级可抢占 Running 分支 |
+| `ReactiveSequence` | 响应式 `&&` | 每帧从头重新评估，前置条件失效时中止后续节点 |
 
 **装饰节点** — 单子节点，变换执行结果
 
 | 节点 | 说明 |
 |------|------|
 | `Inverter` | Success ↔ Failure 翻转 |
-| `Repeater(N)` | 重复执行子节点 N 次 |
+| `Repeater(N)` | 重复执行子节点 N 次，每轮间 Reset 子树 |
 | `AlwaysSucceed` | 吞掉 Failure，强制返回 Success |
-| `UntilFail` | 循环执行直到子节点返回 Failure |
+| `UntilFail` | 每帧执行一次子节点，Failure 时结束 |
 | `Interrupt(event)` | 监听事件，触发时 Reset 子树并返回 Failure |
 
 **叶子节点** — 执行具体工作
 
 | 节点 | 说明 |
 |------|------|
-| `Action` | 包装 `func() Status`，可选 `resetFn` 用于打断时清理 |
+| `Action` | 包装 `func(*Context) Status`，可选 `resetFn` 用于打断时清理 |
 | `Condition` | 从 Blackboard 读值比较（支持 eq/ne/lt/gt/le/ge） |
 | `WaitForEvent(event)` | 返回 Running 直到事件触发，可将事件数据写入黑板 |
 
@@ -51,9 +53,10 @@ go run .
 
 | 组件 | 说明 |
 |------|------|
+| `Context` | 执行上下文，携带 BB/Bus/Delta，每帧创建传入 `Tick(ctx)` |
 | `Blackboard` | `map[string]any` 共享黑板，泛型 `Get[T]` / `MustGet[T]` 取值 |
 | `EventBus` | 帧内事件发布/订阅，`Emit` → 节点 `Poll` → 帧末 `Clear` |
-| `Loader` | JSON 加载器，`RegisterAction` 注册行为函数，JSON 中按名引用 |
+| `Loader` | JSON 加载器，带加载时校验（字段/op/action引用），`RegisterAction` 注册行为 |
 
 ### Running 断点续跑
 
@@ -112,14 +115,14 @@ bt/                     框架层（通用，无业务逻辑）
 ├── wait_event.go       WaitForEvent 叶子节点
 ├── sequence.go         Sequence 组合节点
 ├── selector.go         Selector 组合节点
-├── reactive.go         ReactiveSelector
+├── reactive.go         ReactiveSelector / ReactiveSequence
 ├── decorator.go        Inverter / Repeater / AlwaysSucceed / UntilFail
+├── bt_test.go          25 个单元测试
 ├── interrupt.go        Interrupt 装饰节点
 ├── blackboard.go       Blackboard 共享黑板
 ├── event.go            EventBus 事件总线
 └── loader.go           JSON 加载器 + Action 注册表
 
-boss.json               基础版 Boss 行为树配置（无事件）
 boss_event.json         事件驱动版 Boss 行为树配置
 main.go                 Boss 行为实现 + 17帧战斗模拟
 ```
@@ -138,6 +141,7 @@ main.go                 Boss 行为实现 + 17帧战斗模拟
     {"type": "interrupt", "event": "on_silenced", "child": {"type": "action", "action": "channel"}},
     {"type": "wait_event", "event": "minions_ready", "write_to": "minion_count"},
     {"type": "reactive_selector", "children": [...]},
+    {"type": "reactive_sequence", "children": [...]},
     {"type": "always_succeed", "child": {...}},
     {"type": "until_fail", "child": {...}}
   ]

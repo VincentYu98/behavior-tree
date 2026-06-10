@@ -1,9 +1,5 @@
 package bt
 
-// ============================================================
-// 装饰节点：单子节点，对结果做变换
-// ============================================================
-
 // Inverter 取反：Success ↔ Failure，Running 不变
 type Inverter struct {
 	child Node
@@ -13,8 +9,8 @@ func NewInverter(child Node) *Inverter {
 	return &Inverter{child: child}
 }
 
-func (i *Inverter) Tick() Status {
-	switch i.child.Tick() {
+func (i *Inverter) Tick(ctx *Context) Status {
+	switch i.child.Tick(ctx) {
 	case Success:
 		return Failure
 	case Failure:
@@ -27,24 +23,24 @@ func (i *Inverter) Tick() Status {
 func (i *Inverter) Reset() { i.child.Reset() }
 
 // Repeater 重复执行子节点 N 次
-// 支持断点续跑：子节点返回 Running 时记住当前轮次，下次从该轮恢复
+// 每轮 Success 后调用 child.Reset()，保证子树从干净状态开始下一轮。
 type Repeater struct {
 	count   int
 	child   Node
-	current int // 当前迭代轮次，-1 表示无断点
+	current int
 }
 
 func NewRepeater(count int, child Node) *Repeater {
 	return &Repeater{count: count, child: child, current: -1}
 }
 
-func (r *Repeater) Tick() Status {
+func (r *Repeater) Tick(ctx *Context) Status {
 	start := 0
 	if r.current >= 0 {
 		start = r.current
 	}
 	for i := start; i < r.count; i++ {
-		status := r.child.Tick()
+		status := r.child.Tick(ctx)
 		switch status {
 		case Failure:
 			r.current = -1
@@ -52,6 +48,11 @@ func (r *Repeater) Tick() Status {
 		case Running:
 			r.current = i
 			return Running
+		default:
+			// Success: 本轮完成，重置子树为下一轮做准备
+			if i < r.count-1 {
+				r.child.Reset()
+			}
 		}
 	}
 	r.current = -1
@@ -63,7 +64,10 @@ func (r *Repeater) Reset() {
 	r.child.Reset()
 }
 
-// UntilFail 持续执行子节点直到它返回 Failure，然后返回 Success
+// UntilFail 每帧执行子节点一次
+//   - 子节点 Failure → 返回 Success（循环结束）
+//   - 子节点 Running → 返回 Running（等子节点完成）
+//   - 子节点 Success → 返回 Running（下帧再试，不在同一帧内循环）
 type UntilFail struct {
 	child Node
 }
@@ -72,20 +76,17 @@ func NewUntilFail(child Node) *UntilFail {
 	return &UntilFail{child: child}
 }
 
-func (u *UntilFail) Tick() Status {
-	for {
-		switch u.child.Tick() {
-		case Failure:
-			return Success
-		case Running:
-			return Running
-		}
+func (u *UntilFail) Tick(ctx *Context) Status {
+	status := u.child.Tick(ctx)
+	if status == Failure {
+		return Success
 	}
+	return Running
 }
 
 func (u *UntilFail) Reset() { u.child.Reset() }
 
-// AlwaysSucceed 无论子节点结果如何都返回 Success（Running 除外）
+// AlwaysSucceed 无论子节点返回什么都返回 Success（Running 除外）
 type AlwaysSucceed struct {
 	child Node
 }
@@ -94,8 +95,8 @@ func NewAlwaysSucceed(child Node) *AlwaysSucceed {
 	return &AlwaysSucceed{child: child}
 }
 
-func (a *AlwaysSucceed) Tick() Status {
-	if a.child.Tick() == Running {
+func (a *AlwaysSucceed) Tick(ctx *Context) Status {
+	if a.child.Tick(ctx) == Running {
 		return Running
 	}
 	return Success

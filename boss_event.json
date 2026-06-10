@@ -20,7 +20,7 @@
       ]
     },
     {
-      "type": "selector",
+      "type": "reactive_selector",
       "name": "三阶段战斗",
       "children": [
         {

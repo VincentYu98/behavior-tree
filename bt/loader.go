@@ -6,45 +6,40 @@ import (
 	"os"
 )
 
-// NodeConfig JSON 中每个节点的配置结构
 type NodeConfig struct {
 	Type     string        `json:"type"`
 	Name     string        `json:"name,omitempty"`
-	Action   string        `json:"action,omitempty"`     // action 节点
-	Key      string        `json:"key,omitempty"`        // condition 节点
-	Op       string        `json:"op,omitempty"`         // condition 节点
-	Value    any           `json:"value,omitempty"`      // condition 节点
-	Count    int           `json:"count,omitempty"`      // repeater 节点
-	Event    string        `json:"event,omitempty"`      // interrupt / wait_event 节点
-	WriteTo  string        `json:"write_to,omitempty"`   // wait_event 节点
-	Child    *NodeConfig   `json:"child,omitempty"`      // 装饰节点
-	Children []*NodeConfig `json:"children,omitempty"`   // 组合节点
+	Action   string        `json:"action,omitempty"`
+	Key      string        `json:"key,omitempty"`
+	Op       string        `json:"op,omitempty"`
+	Value    any           `json:"value,omitempty"`
+	Count    int           `json:"count,omitempty"`
+	Event    string        `json:"event,omitempty"`
+	WriteTo  string        `json:"write_to,omitempty"`
+	Child    *NodeConfig   `json:"child,omitempty"`
+	Children []*NodeConfig `json:"children,omitempty"`
 }
 
-// ActionDef 注册的行为定义，包含执行函数和可选的重置函数
 type ActionDef struct {
-	Fn    func() Status
+	Fn    func(ctx *Context) Status
 	Reset func()
 }
 
 // Loader 从 JSON 构建行为树
+// Context 在运行时传入，Loader 只负责构建阶段
 type Loader struct {
-	bb      *Blackboard
-	bus     *EventBus
 	actions map[string]ActionDef
 }
 
-func NewLoader(bb *Blackboard, bus *EventBus) *Loader {
-	return &Loader{bb: bb, bus: bus, actions: make(map[string]ActionDef)}
+func NewLoader() *Loader {
+	return &Loader{actions: make(map[string]ActionDef)}
 }
 
-func (l *Loader) RegisterAction(name string, fn func() Status) {
+func (l *Loader) RegisterAction(name string, fn func(ctx *Context) Status) {
 	l.actions[name] = ActionDef{Fn: fn}
 }
 
-// RegisterActionWithReset 注册带重置函数的行为
-// 重置函数在 Interrupt/ReactiveSelector 打断时被级联调用
-func (l *Loader) RegisterActionWithReset(name string, fn func() Status, resetFn func()) {
+func (l *Loader) RegisterActionWithReset(name string, fn func(ctx *Context) Status, resetFn func()) {
 	l.actions[name] = ActionDef{Fn: fn, Reset: resetFn}
 }
 
@@ -64,13 +59,70 @@ func (l *Loader) LoadJSON(data []byte) (Node, error) {
 	return l.build(&cfg)
 }
 
-func (l *Loader) build(cfg *NodeConfig) (Node, error) {
+var validOps = map[string]bool{
+	"eq": true, "ne": true, "lt": true, "gt": true, "le": true, "ge": true,
+}
+
+func (l *Loader) validate(cfg *NodeConfig) error {
 	switch cfg.Type {
 	case "action":
-		def, ok := l.actions[cfg.Action]
-		if !ok {
-			return nil, fmt.Errorf("unknown action: %q", cfg.Action)
+		if cfg.Action == "" {
+			return fmt.Errorf("action: missing 'action' field")
 		}
+		if _, ok := l.actions[cfg.Action]; !ok {
+			return fmt.Errorf("action: unknown action %q (not registered)", cfg.Action)
+		}
+	case "condition":
+		if cfg.Key == "" {
+			return fmt.Errorf("condition: missing 'key' field")
+		}
+		if !validOps[cfg.Op] {
+			return fmt.Errorf("condition: invalid op %q, valid: eq ne lt gt le ge", cfg.Op)
+		}
+	case "sequence", "selector", "reactive_selector", "reactive_sequence":
+		if len(cfg.Children) == 0 {
+			return fmt.Errorf("%s: 'children' is empty", cfg.Type)
+		}
+	case "inverter", "always_succeed", "until_fail":
+		if cfg.Child == nil {
+			return fmt.Errorf("%s: missing 'child'", cfg.Type)
+		}
+	case "repeater":
+		if cfg.Count <= 0 {
+			return fmt.Errorf("repeater: count must be > 0, got %d", cfg.Count)
+		}
+		if cfg.Child == nil {
+			return fmt.Errorf("repeater: missing 'child'")
+		}
+	case "interrupt":
+		if cfg.Event == "" {
+			return fmt.Errorf("interrupt: missing 'event' field")
+		}
+		if cfg.Child == nil {
+			return fmt.Errorf("interrupt: missing 'child'")
+		}
+	case "wait_event":
+		if cfg.Event == "" {
+			return fmt.Errorf("wait_event: missing 'event' field")
+		}
+	default:
+		return fmt.Errorf("unknown node type: %q", cfg.Type)
+	}
+	return nil
+}
+
+func (l *Loader) build(cfg *NodeConfig) (Node, error) {
+	if err := l.validate(cfg); err != nil {
+		name := cfg.Name
+		if name != "" {
+			return nil, fmt.Errorf("[%s] %w", name, err)
+		}
+		return nil, err
+	}
+
+	switch cfg.Type {
+	case "action":
+		def := l.actions[cfg.Action]
 		name := cfg.Name
 		if name == "" {
 			name = cfg.Action
@@ -78,7 +130,7 @@ func (l *Loader) build(cfg *NodeConfig) (Node, error) {
 		return NewActionWithReset(name, def.Fn, def.Reset), nil
 
 	case "condition":
-		return NewCondition(l.bb, cfg.Key, cfg.Op, cfg.Value), nil
+		return NewCondition(cfg.Key, cfg.Op, cfg.Value), nil
 
 	case "sequence":
 		children, err := l.buildChildren(cfg.Children)
@@ -101,43 +153,50 @@ func (l *Loader) build(cfg *NodeConfig) (Node, error) {
 		}
 		return NewReactiveSelector(children...), nil
 
+	case "reactive_sequence":
+		children, err := l.buildChildren(cfg.Children)
+		if err != nil {
+			return nil, fmt.Errorf("reactive_sequence %q: %w", cfg.Name, err)
+		}
+		return NewReactiveSequence(children...), nil
+
 	case "inverter":
 		child, err := l.buildChild(cfg)
 		if err != nil {
-			return nil, fmt.Errorf("inverter: %w", err)
+			return nil, err
 		}
 		return NewInverter(child), nil
 
 	case "repeater":
 		child, err := l.buildChild(cfg)
 		if err != nil {
-			return nil, fmt.Errorf("repeater: %w", err)
+			return nil, err
 		}
 		return NewRepeater(cfg.Count, child), nil
 
 	case "always_succeed":
 		child, err := l.buildChild(cfg)
 		if err != nil {
-			return nil, fmt.Errorf("always_succeed: %w", err)
+			return nil, err
 		}
 		return NewAlwaysSucceed(child), nil
 
 	case "until_fail":
 		child, err := l.buildChild(cfg)
 		if err != nil {
-			return nil, fmt.Errorf("until_fail: %w", err)
+			return nil, err
 		}
 		return NewUntilFail(child), nil
 
 	case "interrupt":
 		child, err := l.buildChild(cfg)
 		if err != nil {
-			return nil, fmt.Errorf("interrupt: %w", err)
+			return nil, err
 		}
-		return NewInterrupt(cfg.Event, l.bus, child), nil
+		return NewInterrupt(cfg.Event, child), nil
 
 	case "wait_event":
-		return NewWaitForEvent(cfg.Event, cfg.WriteTo, l.bus, l.bb), nil
+		return NewWaitForEvent(cfg.Event, cfg.WriteTo), nil
 
 	default:
 		return nil, fmt.Errorf("unknown node type: %q", cfg.Type)

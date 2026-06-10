@@ -5,7 +5,7 @@ type Status int
 const (
 	Success Status = iota
 	Failure
-	Running // 行为还在执行中，下次 Tick 会从断点继续
+	Running
 )
 
 func (s Status) String() string {
@@ -21,9 +21,15 @@ func (s Status) String() string {
 	}
 }
 
+// Context 行为树的执行上下文，每帧由游戏主循环创建并传入
+// 取代了之前通过闭包捕获 Blackboard/EventBus 的方式
+type Context struct {
+	BB    *Blackboard
+	Bus   *EventBus
+	Delta float64 // 帧间隔时间（秒）
+}
+
 type Node interface {
-	Tick() Status
-	// Reset 清除节点的运行时状态（runningIdx 等）
-	// 当父节点决定不再继续执行某个 Running 子树时调用
+	Tick(ctx *Context) Status
 	Reset()
 }

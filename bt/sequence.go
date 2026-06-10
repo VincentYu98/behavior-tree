@@ -1,26 +1,25 @@
 package bt
 
-// Sequence 从左到右依次执行子节点（&& 语义）
+// Sequence 从左到右依次执行子节点（&& 语义，Memory 版本）
 //
-// 断点续跑：如果某个子节点返回 Running，下次 Tick 直接从该子节点恢复
-// 不会重新执行已经成功的子节点（比如蓄力技能时不会重复判断前置条件）
+// 子节点返回 Running 后，下次 Tick 从断点恢复，不重新执行已成功的子节点。
+// 如果需要每帧重新评估前置条件，使用 ReactiveSequence。
 type Sequence struct {
 	children   []Node
-	runningIdx int // 上次 Running 的子节点下标，-1 表示无断点
+	runningIdx int
 }
 
 func NewSequence(children ...Node) *Sequence {
 	return &Sequence{children: children, runningIdx: -1}
 }
 
-func (s *Sequence) Tick() Status {
+func (s *Sequence) Tick(ctx *Context) Status {
 	start := 0
 	if s.runningIdx >= 0 {
 		start = s.runningIdx
 	}
-
 	for i := start; i < len(s.children); i++ {
-		status := s.children[i].Tick()
+		status := s.children[i].Tick(ctx)
 		switch status {
 		case Failure:
 			s.runningIdx = -1

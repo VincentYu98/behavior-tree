@@ -1,21 +1,19 @@
 package bt
 
-// Condition 条件节点，从黑板读值并比较
-// 支持的操作符：eq, ne, lt, gt, le, ge
-// JSON 加载器用这个节点代替手写的条件 Action
+// Condition 条件节点，从 Context.BB 读值并比较
+// 支持: eq, ne, lt, gt, le, ge
 type Condition struct {
-	bb    *Blackboard
 	key   string
 	op    string
 	value any
 }
 
-func NewCondition(bb *Blackboard, key, op string, value any) *Condition {
-	return &Condition{bb: bb, key: key, op: op, value: value}
+func NewCondition(key, op string, value any) *Condition {
+	return &Condition{key: key, op: op, value: value}
 }
 
-func (c *Condition) Tick() Status {
-	raw, ok := c.bb.GetAny(c.key)
+func (c *Condition) Tick(ctx *Context) Status {
+	raw, ok := ctx.BB.GetAny(c.key)
 	if !ok {
 		return Failure
 	}
@@ -61,7 +59,6 @@ func (c *Condition) Tick() Status {
 
 func (c *Condition) Reset() {}
 
-// 数值相等比较，兼容 int/float64 混合（JSON 数字解析为 float64，黑板值通常是 int）
 func numEquals(a, b any) bool {
 	af, aOk := toFloat(a)
 	bf, bOk := toFloat(b)
