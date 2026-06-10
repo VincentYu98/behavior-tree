@@ -143,7 +143,7 @@ func TestReactiveSequence_ConditionFails(t *testing.T) {
 
 // ==================== Repeater ====================
 
-func TestRepeater_ResetsChildEveryIteration(t *testing.T) {
+func TestRepeater_ResetsBetweenIterations(t *testing.T) {
 	ctx := testCtx()
 	resetCount := 0
 	child := NewActionWithReset("c", func(_ *Context) Status {
@@ -151,34 +151,53 @@ func TestRepeater_ResetsChildEveryIteration(t *testing.T) {
 	}, func(_ *Context) { resetCount++ })
 
 	NewRepeater(3, child).Tick(ctx)
-	// 每轮 Success 后都 Reset，包括最后一轮
-	if resetCount != 3 {
-		t.Fatalf("want 3 resets (every iteration), got %d", resetCount)
+	// Reset between iter 0→1 and 1→2, NOT after last (preserve results)
+	if resetCount != 2 {
+		t.Fatalf("want 2 resets (between iterations), got %d", resetCount)
 	}
 }
 
-func TestRepeater_BareReentryClean(t *testing.T) {
+func TestRepeater_SiblingReadsResult(t *testing.T) {
 	ctx := testCtx()
-	runCount := 0
-	child := NewActionWithReset("c", func(_ *Context) Status {
-		runCount++
+	child := NewActionWithReset("c", func(ctx *Context) Status {
+		ctx.BB.Set("result", 42) // result for sibling
 		return Success
-	}, func(_ *Context) {
-		runCount = 0
+	}, func(ctx *Context) {
+		ctx.BB.Set("_internal", 0) // resetFn only clears internal state
 	})
 
-	rep := NewRepeater(2, child)
-
-	// 第一轮: 2次 Tick + 2次 Reset → runCount=0
-	rep.Tick(ctx)
-	if runCount != 0 {
-		t.Fatalf("after first run: want 0 (reset), got %d", runCount)
+	seq := NewSequence(
+		NewRepeater(2, child),
+		NewAction("read", func(ctx *Context) Status {
+			v, _ := Get[int](ctx.BB, "result")
+			if v != 42 {
+				return Failure
+			}
+			return Success
+		}),
+	)
+	if s := seq.Tick(ctx); s != Success {
+		t.Fatal("sibling should see Repeater's last iteration result")
 	}
+}
 
-	// 裸 re-entry（无父级）: 子树干净
-	rep.Tick(ctx)
-	if runCount != 0 {
-		t.Fatalf("after re-entry: want 0 (reset), got %d", runCount)
+func TestRepeater_ReentryNodeStateClean(t *testing.T) {
+	ctx := testCtx()
+	// 子节点是一个有 nodeState 的 Sequence（含多帧 action）
+	inner := NewSequence(
+		bbStepAction("_step", Running, Success),
+		statusAction(Success),
+	)
+	rep := NewRepeater(1, inner)
+
+	ctx.BB.Set("_step", 0)
+	rep.Tick(ctx) // inner child[0]=Running → rep Running
+	rep.Tick(ctx) // inner child[0]=Success, child[1]=Success → rep Success
+
+	// re-entry: inner 的 nodeState 已在终态时自清，不需要 resetFn
+	ctx.BB.Set("_step", 0)
+	if s := rep.Tick(ctx); s != Running {
+		t.Fatalf("re-entry: want Running (inner starts fresh from child[0]), got %s", s)
 	}
 }
 
@@ -585,6 +604,45 @@ func TestGet_RejectsOutOfRangeFloat(t *testing.T) {
 	bb.Set("inf", math.Inf(1))
 	if _, ok := Get[int](bb, "inf"); ok {
 		t.Fatal("Inf → int should be rejected")
+	}
+}
+
+// ==================== Stateful Action re-entry 模式 ====================
+
+func TestStatefulAction_CleansUpBeforeTerminal(t *testing.T) {
+	ctx := testCtx()
+	// 正确模式：action 在返回 Success 前清理自己的 BB 内部状态
+	action := NewAction("channel", func(ctx *Context) Status {
+		ticks, _ := Get[int](ctx.BB, "_ch_ticks")
+		ticks++
+		ctx.BB.Set("_ch_ticks", ticks)
+		if ticks < 3 {
+			return Running
+		}
+		ctx.BB.Set("_ch_ticks", 0) // 完成前清理
+		return Success
+	})
+
+	sel := NewSelector(
+		NewSequence(NewCondition("go", "eq", true), action),
+		statusAction(Success),
+	)
+
+	ctx.BB.Set("go", true)
+	ctx.BB.Set("_ch_ticks", 0)
+
+	// 第一轮：3帧蓄力
+	sel.Tick(ctx) // Running (ticks=1)
+	sel.Tick(ctx) // Running (ticks=2)
+	sel.Tick(ctx) // Success (ticks→0)
+	if v := MustGet[int](ctx.BB, "_ch_ticks"); v != 0 {
+		t.Fatalf("after completion: want _ch_ticks=0, got %d", v)
+	}
+
+	// 第二轮 re-entry：action 从干净状态开始
+	sel.Tick(ctx) // Running (ticks=1)
+	if v := MustGet[int](ctx.BB, "_ch_ticks"); v != 1 {
+		t.Fatalf("re-entry: want _ch_ticks=1 (fresh start), got %d", v)
 	}
 }
 
