@@ -23,8 +23,8 @@ func (i *Inverter) Tick(ctx *Context) Status {
 func (i *Inverter) Reset(ctx *Context) { i.child.Reset(ctx) }
 
 // Repeater 重复执行子节点 N 次。
-// 迭代间 Reset 子树保证每轮干净。最后一轮 Success 后不 Reset，
-// 避免清掉同帧后续兄弟节点需要消费的结果。re-entry 由父级 Reset 保证。
+// 迭代间 Reset 子树保证每轮干净。最后一轮不 Reset，保留结果给同帧兄弟节点。
+// 终态清理由父级组合节点的 Reset 级联完成。
 type Repeater struct {
 	id    int
 	count int

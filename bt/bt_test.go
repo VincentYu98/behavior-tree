@@ -434,6 +434,121 @@ func TestReactiveSequence_ResetNoDoubleReset(t *testing.T) {
 	}
 }
 
+// ==================== 终态清理 re-entry ====================
+
+func TestSequence_TerminalResetsChildren(t *testing.T) {
+	ctx := testCtx()
+	resetCount := 0
+	child := NewActionWithReset("c", func(_ *Context) Status {
+		resetCount++ // 每次 Tick 加 1
+		return Success
+	}, func(_ *Context) {
+		resetCount = 0 // Reset 清零
+	})
+
+	seq := NewSequence(child, statusAction(Success))
+
+	// 第一轮: child runs (count=1), Sequence=Success → 终态 Reset → count=0
+	seq.Tick(ctx)
+	if resetCount != 0 {
+		t.Fatalf("after first terminal: want 0 (reset), got %d", resetCount)
+	}
+
+	// 第二轮: child 从干净状态启动 (count=1), 又终态 Reset → count=0
+	seq.Tick(ctx)
+	if resetCount != 0 {
+		t.Fatalf("after second terminal: want 0 (reset), got %d", resetCount)
+	}
+}
+
+func TestSelector_TerminalResetsChildren(t *testing.T) {
+	ctx := testCtx()
+	resetCalled := false
+	child := NewActionWithReset("c", func(_ *Context) Status {
+		return Success
+	}, func(_ *Context) { resetCalled = true })
+
+	sel := NewSelector(child)
+	sel.Tick(ctx)
+	if !resetCalled {
+		t.Fatal("Selector terminal should Reset children")
+	}
+}
+
+func TestRepeater_ParentTerminalCascade(t *testing.T) {
+	ctx := testCtx()
+	childResets := 0
+	child := NewActionWithReset("c", func(_ *Context) Status {
+		return Success
+	}, func(_ *Context) { childResets++ })
+
+	// Sequence [Repeater(2, child), noop]
+	// Repeater 最后一轮不 Reset child，但 Sequence 终态 Reset 级联到 Repeater → child
+	seq := NewSequence(
+		NewRepeater(2, child),
+		statusAction(Success),
+	)
+	seq.Tick(ctx)
+	// 1 inter-iteration reset (iter 0→1) + 1 terminal cascade (Sequence→Repeater→child)
+	if childResets != 2 {
+		t.Fatalf("want 2 total resets (1 inter-iter + 1 terminal cascade), got %d", childResets)
+	}
+}
+
+// ==================== Blackboard nil 安全 ====================
+
+func TestBlackboard_NilSafe(t *testing.T) {
+	var bb *Blackboard
+
+	// Get on nil
+	v, ok := Get[int](bb, "x")
+	if ok || v != 0 {
+		t.Fatalf("Get on nil: want (0, false), got (%d, %v)", v, ok)
+	}
+
+	// Set on nil (should not panic)
+	bb.Set("x", 1)
+
+	// Has on nil
+	if bb.Has("x") {
+		t.Fatal("Has on nil should be false")
+	}
+
+	// GetAny on nil
+	_, ok = bb.GetAny("x")
+	if ok {
+		t.Fatal("GetAny on nil should be false")
+	}
+
+	// Delete on nil (should not panic)
+	bb.Delete("x")
+}
+
+// ==================== 浮点截断拒绝 ====================
+
+func TestGet_RejectsNonIntegralFloat(t *testing.T) {
+	bb := NewBlackboard()
+
+	bb.Set("x", 3.9)
+	_, ok := Get[int](bb, "x")
+	if ok {
+		t.Fatal("3.9 → int should be rejected (non-integral)")
+	}
+
+	bb.Set("y", 3.0)
+	v, ok := Get[int](bb, "y")
+	if !ok || v != 3 {
+		t.Fatalf("3.0 → int should work: got %d %v", v, ok)
+	}
+
+	// float → float 不受限制
+	bb.Set("z", 3.9)
+	f, ok := Get[float64](bb, "z")
+	if !ok || f != 3.9 {
+		t.Fatalf("float64 → float64 should work: got %v %v", f, ok)
+	}
+}
+
 // ==================== 多实体共享树 ====================
 
 func TestMultiEntity_SharedTree(t *testing.T) {

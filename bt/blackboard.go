@@ -1,6 +1,9 @@
 package bt
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 type Blackboard struct {
 	data map[string]any
@@ -11,29 +14,44 @@ func NewBlackboard() *Blackboard {
 }
 
 func (b *Blackboard) Set(key string, value any) {
+	if b == nil {
+		return
+	}
 	b.data[key] = value
 }
 
 func (b *Blackboard) Has(key string) bool {
+	if b == nil {
+		return false
+	}
 	_, ok := b.data[key]
 	return ok
 }
 
 func (b *Blackboard) Delete(key string) {
+	if b == nil {
+		return
+	}
 	delete(b.data, key)
 }
 
 func (b *Blackboard) GetAny(key string) (any, bool) {
+	if b == nil {
+		return nil, false
+	}
 	val, ok := b.data[key]
 	return val, ok
 }
 
-// Get 泛型取值，直接类型匹配失败时尝试数值类型互转（int↔float64 等）。
-// 这保证 Condition 的数值比较和业务层的 Get[int] 对同一个 key 行为一致。
+// Get 泛型取值。直接类型匹配失败时尝试数值互转。
+// float→int 只接受整值浮点（3.0→3），非整值（3.9）返回 false 而非静默截断。
 func Get[T any](b *Blackboard, key string) (T, bool) {
+	var zero T
+	if b == nil {
+		return zero, false
+	}
 	val, ok := b.data[key]
 	if !ok {
-		var zero T
 		return zero, false
 	}
 	if typed, ok := val.(T); ok {
@@ -50,8 +68,8 @@ func MustGet[T any](b *Blackboard, key string) T {
 	return val
 }
 
-// coerceNumeric 尝试将 val 转为目标数值类型 T。
-// 只在 int 系列和 float 系列之间互转，不处理 bool/string。
+// coerceNumeric 在数值类型之间互转。
+// float→int 仅接受整值（无小数部分），拒绝 NaN/Inf/非整值浮点。
 func coerceNumeric[T any](val any) (T, bool) {
 	var zero T
 	f, ok := asFloat64(val)
@@ -60,12 +78,21 @@ func coerceNumeric[T any](val any) (T, bool) {
 	}
 	switch p := any(&zero).(type) {
 	case *int:
+		if !isIntegral(f) {
+			return zero, false
+		}
 		*p = int(f)
 		return zero, true
 	case *int32:
+		if !isIntegral(f) {
+			return zero, false
+		}
 		*p = int32(f)
 		return zero, true
 	case *int64:
+		if !isIntegral(f) {
+			return zero, false
+		}
 		*p = int64(f)
 		return zero, true
 	case *float32:
@@ -78,7 +105,13 @@ func coerceNumeric[T any](val any) (T, bool) {
 	return zero, false
 }
 
-// asFloat64 将数值类型统一转为 float64，供 Get 和 Condition 共用。
+func isIntegral(f float64) bool {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return false
+	}
+	return f == math.Trunc(f)
+}
+
 func asFloat64(v any) (float64, bool) {
 	switch n := v.(type) {
 	case int:

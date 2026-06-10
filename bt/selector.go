@@ -1,7 +1,7 @@
 package bt
 
 // Selector 从左到右尝试子节点（|| 语义，Memory 版本）
-// 运行态存在 Context 中。
+// 返回终态时 Reset 全部子节点，保证 re-entry 干净。
 type Selector struct {
 	id       int
 	children []Node
@@ -20,14 +20,14 @@ func (s *Selector) Tick(ctx *Context) Status {
 		status := s.children[i].Tick(ctx)
 		switch status {
 		case Success:
-			ctx.clearNodeState(s.id)
+			s.Reset(ctx)
 			return Success
 		case Running:
 			ctx.setNodeState(s.id, i)
 			return Running
 		}
 	}
-	ctx.clearNodeState(s.id)
+	s.Reset(ctx)
 	return Failure
 }
 

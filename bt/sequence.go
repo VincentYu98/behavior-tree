@@ -1,7 +1,7 @@
 package bt
 
 // Sequence 从左到右依次执行子节点（&& 语义，Memory 版本）
-// 运行态（runningIdx）存在 Context 中，节点本身无状态。
+// 返回终态时 Reset 全部子节点，保证 re-entry 干净。
 type Sequence struct {
 	id       int
 	children []Node
@@ -20,14 +20,14 @@ func (s *Sequence) Tick(ctx *Context) Status {
 		status := s.children[i].Tick(ctx)
 		switch status {
 		case Failure:
-			ctx.clearNodeState(s.id)
+			s.Reset(ctx)
 			return Failure
 		case Running:
 			ctx.setNodeState(s.id, i)
 			return Running
 		}
 	}
-	ctx.clearNodeState(s.id)
+	s.Reset(ctx)
 	return Success
 }
 

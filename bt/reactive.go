@@ -1,6 +1,7 @@
 package bt
 
 // ReactiveSelector 每帧从 child[0] 重新评估，高优先级可抢占 Running 分支。
+// 返回终态时 Reset 全部子节点。
 type ReactiveSelector struct {
 	id       int
 	children []Node
@@ -11,11 +12,7 @@ func NewReactiveSelector(children ...Node) *ReactiveSelector {
 }
 
 func (rs *ReactiveSelector) Tick(ctx *Context) Status {
-	prevRunning, _ := getNodeState[int](ctx, rs.id)
-	hasPrev := false
-	if _, ok := getNodeState[int](ctx, rs.id); ok {
-		hasPrev = true
-	}
+	prevRunning, hasPrev := getNodeState[int](ctx, rs.id)
 
 	for i, child := range rs.children {
 		status := child.Tick(ctx)
@@ -24,7 +21,7 @@ func (rs *ReactiveSelector) Tick(ctx *Context) Status {
 			if hasPrev && prevRunning != i {
 				rs.children[prevRunning].Reset(ctx)
 			}
-			ctx.clearNodeState(rs.id)
+			rs.Reset(ctx)
 			return Success
 		case Running:
 			if hasPrev && prevRunning != i {
@@ -37,7 +34,7 @@ func (rs *ReactiveSelector) Tick(ctx *Context) Status {
 	if hasPrev {
 		rs.children[prevRunning].Reset(ctx)
 	}
-	ctx.clearNodeState(rs.id)
+	rs.Reset(ctx)
 	return Failure
 }
 
@@ -49,6 +46,7 @@ func (rs *ReactiveSelector) Reset(ctx *Context) {
 }
 
 // ReactiveSequence 每帧从 child[0] 重新评估，前置条件失效时中止后续节点。
+// 返回终态时 Reset 全部子节点。
 type ReactiveSequence struct {
 	id       int
 	children []Node
@@ -59,11 +57,7 @@ func NewReactiveSequence(children ...Node) *ReactiveSequence {
 }
 
 func (rs *ReactiveSequence) Tick(ctx *Context) Status {
-	prevRunning, _ := getNodeState[int](ctx, rs.id)
-	hasPrev := false
-	if _, ok := getNodeState[int](ctx, rs.id); ok {
-		hasPrev = true
-	}
+	prevRunning, hasPrev := getNodeState[int](ctx, rs.id)
 
 	for i, child := range rs.children {
 		status := child.Tick(ctx)
@@ -72,7 +66,7 @@ func (rs *ReactiveSequence) Tick(ctx *Context) Status {
 			if hasPrev && prevRunning != i {
 				rs.children[prevRunning].Reset(ctx)
 			}
-			ctx.clearNodeState(rs.id)
+			rs.Reset(ctx)
 			return Failure
 		case Running:
 			if hasPrev && prevRunning != i {
@@ -85,7 +79,7 @@ func (rs *ReactiveSequence) Tick(ctx *Context) Status {
 	if hasPrev {
 		rs.children[prevRunning].Reset(ctx)
 	}
-	ctx.clearNodeState(rs.id)
+	rs.Reset(ctx)
 	return Success
 }
 
