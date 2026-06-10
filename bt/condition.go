@@ -13,6 +13,9 @@ func NewCondition(key, op string, value any) *Condition {
 }
 
 func (c *Condition) Tick(ctx *Context) Status {
+	if ctx == nil || ctx.BB == nil {
+		return Failure
+	}
 	raw, ok := ctx.BB.GetAny(c.key)
 	if !ok {
 		return Failure
@@ -60,8 +63,8 @@ func (c *Condition) Tick(ctx *Context) Status {
 func (c *Condition) Reset() {}
 
 func numEquals(a, b any) bool {
-	af, aOk := toFloat(a)
-	bf, bOk := toFloat(b)
+	af, aOk := asFloat64(a)
+	bf, bOk := asFloat64(b)
 	if aOk && bOk {
 		return af == bf
 	}
@@ -69,24 +72,7 @@ func numEquals(a, b any) bool {
 }
 
 func toFloats(a, b any) (float64, float64, bool) {
-	af, aOk := toFloat(a)
-	bf, bOk := toFloat(b)
+	af, aOk := asFloat64(a)
+	bf, bOk := asFloat64(b)
 	return af, bf, aOk && bOk
-}
-
-func toFloat(v any) (float64, bool) {
-	switch n := v.(type) {
-	case int:
-		return float64(n), true
-	case int32:
-		return float64(n), true
-	case int64:
-		return float64(n), true
-	case float32:
-		return float64(n), true
-	case float64:
-		return n, true
-	default:
-		return 0, false
-	}
 }

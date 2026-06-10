@@ -1,14 +1,12 @@
 package bt
 
-// Event 一次事件，携带类型和可选数据
 type Event struct {
 	Type string
 	Data any
 }
 
 // EventBus 事件总线
-// 游戏系统在 Tick 前发射事件，行为树节点在 Tick 中消费
-// 每帧结束后调用 Clear() 清理
+// 生命周期：Emit → 节点 Poll/PollAll → 帧末 Clear
 type EventBus struct {
 	fired     []Event
 	listeners map[string][]func(Event)
@@ -20,7 +18,6 @@ func NewEventBus() *EventBus {
 	}
 }
 
-// Emit 发射事件（在 tree.Tick() 之前调用）
 func (eb *EventBus) Emit(eventType string, data any) {
 	evt := Event{Type: eventType, Data: data}
 	eb.fired = append(eb.fired, evt)
@@ -29,22 +26,33 @@ func (eb *EventBus) Emit(eventType string, data any) {
 	}
 }
 
-// Poll 检查本帧是否有指定类型的事件
+// Poll 返回本帧该类型的最后一条事件（latest wins）。
+// 同帧多次 Emit 同类型事件时，只取最新的。
 func (eb *EventBus) Poll(eventType string) (Event, bool) {
-	for _, e := range eb.fired {
-		if e.Type == eventType {
-			return e, true
+	for i := len(eb.fired) - 1; i >= 0; i-- {
+		if eb.fired[i].Type == eventType {
+			return eb.fired[i], true
 		}
 	}
 	return Event{}, false
 }
 
-// Subscribe 注册监听器（可选，用于游戏系统间通信）
+// PollAll 返回本帧该类型的所有事件，按 Emit 顺序排列。
+// 用于需要聚合的场景（累计伤害、多目标命中等）。
+func (eb *EventBus) PollAll(eventType string) []Event {
+	var result []Event
+	for _, e := range eb.fired {
+		if e.Type == eventType {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
 func (eb *EventBus) Subscribe(eventType string, handler func(Event)) {
 	eb.listeners[eventType] = append(eb.listeners[eventType], handler)
 }
 
-// Clear 清理本帧事件，每帧结束时调用
 func (eb *EventBus) Clear() {
 	eb.fired = eb.fired[:0]
 }

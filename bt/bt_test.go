@@ -535,3 +535,133 @@ func TestUntilFail_ResetsChildAfterSuccess(t *testing.T) {
 		t.Fatalf("tick3: want still 2 resets (no reset on Failure exit), got %d", resetCount)
 	}
 }
+
+// ==================== EventBus: Poll 返回最新、PollAll 返回全部 ====================
+
+func TestPoll_ReturnsLatestEvent(t *testing.T) {
+	bus := NewEventBus()
+	bus.Emit("dmg", 10)
+	bus.Emit("dmg", 25)
+	bus.Emit("dmg", 50)
+
+	evt, ok := bus.Poll("dmg")
+	if !ok {
+		t.Fatal("should find event")
+	}
+	if evt.Data.(int) != 50 {
+		t.Fatalf("Poll should return latest: want 50, got %v", evt.Data)
+	}
+}
+
+func TestPollAll_ReturnsAllEvents(t *testing.T) {
+	bus := NewEventBus()
+	bus.Emit("dmg", 10)
+	bus.Emit("heal", 5)
+	bus.Emit("dmg", 25)
+
+	all := bus.PollAll("dmg")
+	if len(all) != 2 {
+		t.Fatalf("want 2 dmg events, got %d", len(all))
+	}
+	if all[0].Data.(int) != 10 || all[1].Data.(int) != 25 {
+		t.Fatalf("events out of order: %v", all)
+	}
+}
+
+// ==================== Nil Context 防御 ====================
+
+func TestCondition_NilContext(t *testing.T) {
+	c := NewCondition("x", "eq", 1)
+	if s := c.Tick(nil); s != Failure {
+		t.Fatalf("nil ctx: want Failure, got %s", s)
+	}
+	ctx := &Context{} // BB is nil
+	if s := c.Tick(ctx); s != Failure {
+		t.Fatalf("nil BB: want Failure, got %s", s)
+	}
+}
+
+func TestWaitForEvent_NilBus(t *testing.T) {
+	w := NewWaitForEvent("evt", "key")
+	if s := w.Tick(nil); s != Failure {
+		t.Fatalf("nil ctx: want Failure, got %s", s)
+	}
+	ctx := &Context{BB: NewBlackboard()} // Bus is nil
+	if s := w.Tick(ctx); s != Failure {
+		t.Fatalf("nil Bus: want Failure, got %s", s)
+	}
+}
+
+func TestInterrupt_NilBus_PassesThrough(t *testing.T) {
+	child := statusAction(Success)
+	intr := NewInterrupt("evt", child)
+
+	// nil Bus: can't check events, should pass through to child
+	ctx := &Context{BB: NewBlackboard()}
+	if s := intr.Tick(ctx); s != Success {
+		t.Fatalf("nil Bus: want child's Success, got %s", s)
+	}
+}
+
+// ==================== Blackboard 数值互转 ====================
+
+func TestGet_NumericCoercion(t *testing.T) {
+	bb := NewBlackboard()
+
+	// float64 → int (JSON 数字场景)
+	bb.Set("hp", 100.0)
+	v, ok := Get[int](bb, "hp")
+	if !ok || v != 100 {
+		t.Fatalf("float64→int: want 100, got %v ok=%v", v, ok)
+	}
+
+	// int → float64
+	bb.Set("speed", 5)
+	f, ok := Get[float64](bb, "speed")
+	if !ok || f != 5.0 {
+		t.Fatalf("int→float64: want 5.0, got %v ok=%v", f, ok)
+	}
+
+	// bool 不做数值转换
+	bb.Set("flag", true)
+	_, ok = Get[int](bb, "flag")
+	if ok {
+		t.Fatal("bool→int should fail")
+	}
+
+	// string 不做数值转换
+	bb.Set("name", "boss")
+	_, ok = Get[int](bb, "name")
+	if ok {
+		t.Fatal("string→int should fail")
+	}
+}
+
+func TestMustGet_CoercionWorks(t *testing.T) {
+	bb := NewBlackboard()
+	bb.Set("x", 42.0)
+
+	// MustGet[int] 对 float64 值不再 panic
+	v := MustGet[int](bb, "x")
+	if v != 42 {
+		t.Fatalf("MustGet[int] on float64: want 42, got %d", v)
+	}
+}
+
+func TestConditionAndGet_ConsistentOnSameKey(t *testing.T) {
+	ctx := testCtx()
+	// 模拟事件 payload 写入 float64 (JSON 反序列化的典型情况)
+	ctx.BB.Set("count", 3.0)
+
+	// Condition 判断成功
+	c := NewCondition("count", "eq", 3.0)
+	if s := c.Tick(ctx); s != Success {
+		t.Fatal("Condition eq 3.0 should succeed")
+	}
+
+	// Get[int] 也能读到值（之前会失败）
+	v, ok := Get[int](ctx.BB, "count")
+	if !ok || v != 3 {
+		t.Fatalf("Get[int] on float64 3.0: want 3, got %v ok=%v", v, ok)
+	}
+}

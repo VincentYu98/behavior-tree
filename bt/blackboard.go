@@ -2,8 +2,6 @@ package bt
 
 import "fmt"
 
-// Blackboard 行为树的共享数据黑板
-// 节点之间不直接传数据，通过黑板解耦
 type Blackboard struct {
 	data map[string]any
 }
@@ -30,18 +28,18 @@ func (b *Blackboard) GetAny(key string) (any, bool) {
 	return val, ok
 }
 
+// Get 泛型取值，直接类型匹配失败时尝试数值类型互转（int↔float64 等）。
+// 这保证 Condition 的数值比较和业务层的 Get[int] 对同一个 key 行为一致。
 func Get[T any](b *Blackboard, key string) (T, bool) {
 	val, ok := b.data[key]
 	if !ok {
 		var zero T
 		return zero, false
 	}
-	typed, ok := val.(T)
-	if !ok {
-		var zero T
-		return zero, false
+	if typed, ok := val.(T); ok {
+		return typed, true
 	}
-	return typed, true
+	return coerceNumeric[T](val)
 }
 
 func MustGet[T any](b *Blackboard, key string) T {
@@ -50,4 +48,50 @@ func MustGet[T any](b *Blackboard, key string) T {
 		panic(fmt.Sprintf("blackboard: key %q not found or type mismatch", key))
 	}
 	return val
+}
+
+// coerceNumeric 尝试将 val 转为目标数值类型 T。
+// 只在 int 系列和 float 系列之间互转，不处理 bool/string。
+func coerceNumeric[T any](val any) (T, bool) {
+	var zero T
+	f, ok := asFloat64(val)
+	if !ok {
+		return zero, false
+	}
+	switch p := any(&zero).(type) {
+	case *int:
+		*p = int(f)
+		return zero, true
+	case *int32:
+		*p = int32(f)
+		return zero, true
+	case *int64:
+		*p = int64(f)
+		return zero, true
+	case *float32:
+		*p = float32(f)
+		return zero, true
+	case *float64:
+		*p = f
+		return zero, true
+	}
+	return zero, false
+}
+
+// asFloat64 将数值类型统一转为 float64，供 Get 和 Condition 共用。
+func asFloat64(v any) (float64, bool) {
+	switch n := v.(type) {
+	case int:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case float32:
+		return float64(n), true
+	case float64:
+		return n, true
+	default:
+		return 0, false
+	}
 }
