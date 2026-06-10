@@ -434,64 +434,61 @@ func TestReactiveSequence_ResetNoDoubleReset(t *testing.T) {
 	}
 }
 
-// ==================== 终态清理 re-entry ====================
+// ==================== 终态不误清兄弟数据 ====================
 
-func TestSequence_TerminalResetsChildren(t *testing.T) {
+func TestSequence_TerminalDoesNotResetChildren(t *testing.T) {
 	ctx := testCtx()
 	resetCount := 0
 	child := NewActionWithReset("c", func(_ *Context) Status {
-		resetCount++ // 每次 Tick 加 1
 		return Success
-	}, func(_ *Context) {
-		resetCount = 0 // Reset 清零
-	})
+	}, func(_ *Context) { resetCount++ })
 
 	seq := NewSequence(child, statusAction(Success))
-
-	// 第一轮: child runs (count=1), Sequence=Success → 终态 Reset → count=0
 	seq.Tick(ctx)
+	// 终态只清自身 nodeState，不调用子节点 resetFn
 	if resetCount != 0 {
-		t.Fatalf("after first terminal: want 0 (reset), got %d", resetCount)
-	}
-
-	// 第二轮: child 从干净状态启动 (count=1), 又终态 Reset → count=0
-	seq.Tick(ctx)
-	if resetCount != 0 {
-		t.Fatalf("after second terminal: want 0 (reset), got %d", resetCount)
+		t.Fatalf("terminal should NOT reset children, got %d resets", resetCount)
 	}
 }
 
-func TestSelector_TerminalResetsChildren(t *testing.T) {
+func TestSequence_SubSeqResultVisibleToSibling(t *testing.T) {
 	ctx := testCtx()
-	resetCalled := false
-	child := NewActionWithReset("c", func(_ *Context) Status {
-		return Success
-	}, func(_ *Context) { resetCalled = true })
-
-	sel := NewSelector(child)
-	sel.Tick(ctx)
-	if !resetCalled {
-		t.Fatal("Selector terminal should Reset children")
-	}
-}
-
-func TestRepeater_ParentTerminalCascade(t *testing.T) {
-	ctx := testCtx()
-	childResets := 0
-	child := NewActionWithReset("c", func(_ *Context) Status {
-		return Success
-	}, func(_ *Context) { childResets++ })
-
-	// Sequence [Repeater(2, child), noop]
-	// Repeater 最后一轮不 Reset child，但 Sequence 终态 Reset 级联到 Repeater → child
-	seq := NewSequence(
-		NewRepeater(2, child),
-		statusAction(Success),
+	// subSeq 写入 BB 结果，sibling 读取
+	subSeq := NewSequence(
+		NewAction("write", func(ctx *Context) Status {
+			ctx.BB.Set("result", 42)
+			return Success
+		}),
 	)
-	seq.Tick(ctx)
-	// 1 inter-iteration reset (iter 0→1) + 1 terminal cascade (Sequence→Repeater→child)
-	if childResets != 2 {
-		t.Fatalf("want 2 total resets (1 inter-iter + 1 terminal cascade), got %d", childResets)
+	sibling := NewAction("read", func(ctx *Context) Status {
+		v, ok := Get[int](ctx.BB, "result")
+		if !ok || v != 42 {
+			return Failure
+		}
+		return Success
+	})
+	outer := NewSequence(subSeq, sibling)
+	if s := outer.Tick(ctx); s != Success {
+		t.Fatal("sibling should see subSeq's BB result")
+	}
+}
+
+func TestReactiveSelector_PreemptionNoDoubleReset(t *testing.T) {
+	ctx := testCtx()
+	resetCount := 0
+	lowPri := NewActionWithReset("low", func(_ *Context) Status {
+		return Running
+	}, func(_ *Context) { resetCount++ })
+
+	ctx.BB.Set("_hi", 0)
+	hiPri := bbStepAction("_hi", Failure, Success)
+	rs := NewReactiveSelector(hiPri, lowPri)
+
+	rs.Tick(ctx) // hiPri=Fail, lowPri=Running
+	rs.Tick(ctx) // hiPri=Success → preempt lowPri
+	// lowPri should be Reset exactly once (preemption), not twice
+	if resetCount != 1 {
+		t.Fatalf("want exactly 1 reset (preemption only), got %d", resetCount)
 	}
 }
 
@@ -500,28 +497,41 @@ func TestRepeater_ParentTerminalCascade(t *testing.T) {
 func TestBlackboard_NilSafe(t *testing.T) {
 	var bb *Blackboard
 
-	// Get on nil
 	v, ok := Get[int](bb, "x")
 	if ok || v != 0 {
 		t.Fatalf("Get on nil: want (0, false), got (%d, %v)", v, ok)
 	}
-
-	// Set on nil (should not panic)
 	bb.Set("x", 1)
-
-	// Has on nil
 	if bb.Has("x") {
 		t.Fatal("Has on nil should be false")
 	}
-
-	// GetAny on nil
 	_, ok = bb.GetAny("x")
 	if ok {
 		t.Fatal("GetAny on nil should be false")
 	}
-
-	// Delete on nil (should not panic)
 	bb.Delete("x")
+}
+
+func TestBlackboard_ZeroValueSafe(t *testing.T) {
+	bb := &Blackboard{} // data == nil
+
+	// Set should lazy-init the map, not panic
+	bb.Set("x", 42)
+	v, ok := Get[int](bb, "x")
+	if !ok || v != 42 {
+		t.Fatalf("after Set on zero-value BB: want 42, got %v %v", v, ok)
+	}
+
+	// Other methods also safe before any Set
+	bb2 := &Blackboard{}
+	if bb2.Has("y") {
+		t.Fatal("Has on zero-value should be false")
+	}
+	_, ok = bb2.GetAny("y")
+	if ok {
+		t.Fatal("GetAny on zero-value should be false")
+	}
+	bb2.Delete("y") // should not panic
 }
 
 // ==================== 浮点截断拒绝 ====================

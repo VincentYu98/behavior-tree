@@ -17,11 +17,14 @@ func (b *Blackboard) Set(key string, value any) {
 	if b == nil {
 		return
 	}
+	if b.data == nil {
+		b.data = make(map[string]any)
+	}
 	b.data[key] = value
 }
 
 func (b *Blackboard) Has(key string) bool {
-	if b == nil {
+	if b == nil || b.data == nil {
 		return false
 	}
 	_, ok := b.data[key]
@@ -29,14 +32,14 @@ func (b *Blackboard) Has(key string) bool {
 }
 
 func (b *Blackboard) Delete(key string) {
-	if b == nil {
+	if b == nil || b.data == nil {
 		return
 	}
 	delete(b.data, key)
 }
 
 func (b *Blackboard) GetAny(key string) (any, bool) {
-	if b == nil {
+	if b == nil || b.data == nil {
 		return nil, false
 	}
 	val, ok := b.data[key]
@@ -47,7 +50,7 @@ func (b *Blackboard) GetAny(key string) (any, bool) {
 // float→int 只接受整值浮点（3.0→3），非整值（3.9）返回 false 而非静默截断。
 func Get[T any](b *Blackboard, key string) (T, bool) {
 	var zero T
-	if b == nil {
+	if b == nil || b.data == nil {
 		return zero, false
 	}
 	val, ok := b.data[key]

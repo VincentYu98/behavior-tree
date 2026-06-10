@@ -1,7 +1,8 @@
 package bt
 
 // Sequence 从左到右依次执行子节点（&& 语义，Memory 版本）
-// 返回终态时 Reset 全部子节点，保证 re-entry 干净。
+// 终态时清自己的 nodeState。子节点在各自返回终态时已清理自身 nodeState。
+// resetFn 仅在 Running 被打断时由父级 Reset 级联调用。
 type Sequence struct {
 	id       int
 	children []Node
@@ -20,14 +21,14 @@ func (s *Sequence) Tick(ctx *Context) Status {
 		status := s.children[i].Tick(ctx)
 		switch status {
 		case Failure:
-			s.Reset(ctx)
+			ctx.clearNodeState(s.id)
 			return Failure
 		case Running:
 			ctx.setNodeState(s.id, i)
 			return Running
 		}
 	}
-	s.Reset(ctx)
+	ctx.clearNodeState(s.id)
 	return Success
 }
 

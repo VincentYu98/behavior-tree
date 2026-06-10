@@ -1,7 +1,7 @@
 package bt
 
 // ReactiveSelector 每帧从 child[0] 重新评估，高优先级可抢占 Running 分支。
-// 返回终态时 Reset 全部子节点。
+// 终态时只清自己的 nodeState。prevRunning Reset 是正当的打断（Running→放弃），不算双重 Reset。
 type ReactiveSelector struct {
 	id       int
 	children []Node
@@ -19,9 +19,9 @@ func (rs *ReactiveSelector) Tick(ctx *Context) Status {
 		switch status {
 		case Success:
 			if hasPrev && prevRunning != i {
-				rs.children[prevRunning].Reset(ctx)
+				rs.children[prevRunning].Reset(ctx) // 打断旧 Running 分支
 			}
-			rs.Reset(ctx)
+			ctx.clearNodeState(rs.id)
 			return Success
 		case Running:
 			if hasPrev && prevRunning != i {
@@ -32,9 +32,9 @@ func (rs *ReactiveSelector) Tick(ctx *Context) Status {
 		}
 	}
 	if hasPrev {
-		rs.children[prevRunning].Reset(ctx)
+		rs.children[prevRunning].Reset(ctx) // 打断旧 Running 分支
 	}
-	rs.Reset(ctx)
+	ctx.clearNodeState(rs.id)
 	return Failure
 }
 
@@ -46,7 +46,6 @@ func (rs *ReactiveSelector) Reset(ctx *Context) {
 }
 
 // ReactiveSequence 每帧从 child[0] 重新评估，前置条件失效时中止后续节点。
-// 返回终态时 Reset 全部子节点。
 type ReactiveSequence struct {
 	id       int
 	children []Node
@@ -66,7 +65,7 @@ func (rs *ReactiveSequence) Tick(ctx *Context) Status {
 			if hasPrev && prevRunning != i {
 				rs.children[prevRunning].Reset(ctx)
 			}
-			rs.Reset(ctx)
+			ctx.clearNodeState(rs.id)
 			return Failure
 		case Running:
 			if hasPrev && prevRunning != i {
@@ -79,7 +78,7 @@ func (rs *ReactiveSequence) Tick(ctx *Context) Status {
 	if hasPrev {
 		rs.children[prevRunning].Reset(ctx)
 	}
-	rs.Reset(ctx)
+	ctx.clearNodeState(rs.id)
 	return Success
 }
 
