@@ -1,7 +1,5 @@
 package bt
 
-// Condition 条件节点，从 Context.BB 读值并比较
-// 支持: eq, ne, lt, gt, le, ge
 type Condition struct {
 	key   string
 	op    string
@@ -60,7 +58,7 @@ func (c *Condition) Tick(ctx *Context) Status {
 	return Failure
 }
 
-func (c *Condition) Reset() {}
+func (c *Condition) Reset(_ *Context) {}
 
 func numEquals(a, b any) bool {
 	af, aOk := asFloat64(a)

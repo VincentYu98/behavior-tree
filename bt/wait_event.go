@@ -1,9 +1,5 @@
 package bt
 
-// WaitForEvent 等待事件节点
-//
-// 每帧检查 Context.Bus，事件触发则将 Data 写入 Context.BB（可选）并返回 Success。
-// 如果 ctx 或 ctx.Bus 为 nil，返回 Failure（永远无法收到事件）。
 type WaitForEvent struct {
 	event   string
 	writeTo string
@@ -27,4 +23,4 @@ func (w *WaitForEvent) Tick(ctx *Context) Status {
 	return Success
 }
 
-func (w *WaitForEvent) Reset() {}
+func (w *WaitForEvent) Reset(_ *Context) {}

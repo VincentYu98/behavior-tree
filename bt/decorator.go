@@ -1,6 +1,6 @@
 package bt
 
-// Inverter 取反：Success ↔ Failure，Running 不变
+// Inverter Success ↔ Failure，Running 不变
 type Inverter struct {
 	child Node
 }
@@ -20,51 +20,51 @@ func (i *Inverter) Tick(ctx *Context) Status {
 	}
 }
 
-func (i *Inverter) Reset() { i.child.Reset() }
+func (i *Inverter) Reset(ctx *Context) { i.child.Reset(ctx) }
 
-// Repeater 重复执行子节点 N 次
-// 每轮 Success 后调用 child.Reset()，保证子树从干净状态开始下一轮。
+// Repeater 重复执行子节点 N 次。
+// 迭代间 Reset 子树保证每轮干净。最后一轮 Success 后不 Reset，
+// 避免清掉同帧后续兄弟节点需要消费的结果。re-entry 由父级 Reset 保证。
 type Repeater struct {
-	count   int
-	child   Node
-	current int
+	id    int
+	count int
+	child Node
 }
 
 func NewRepeater(count int, child Node) *Repeater {
-	return &Repeater{count: count, child: child, current: -1}
+	return &Repeater{id: nextNodeID(), count: count, child: child}
 }
 
 func (r *Repeater) Tick(ctx *Context) Status {
 	start := 0
-	if r.current >= 0 {
-		start = r.current
+	if idx, ok := getNodeState[int](ctx, r.id); ok {
+		start = idx
 	}
 	for i := start; i < r.count; i++ {
 		status := r.child.Tick(ctx)
 		switch status {
 		case Failure:
-			r.current = -1
+			ctx.clearNodeState(r.id)
 			return Failure
 		case Running:
-			r.current = i
+			ctx.setNodeState(r.id, i)
 			return Running
 		default:
-			r.child.Reset()
+			if i < r.count-1 {
+				r.child.Reset(ctx)
+			}
 		}
 	}
-	r.current = -1
+	ctx.clearNodeState(r.id)
 	return Success
 }
 
-func (r *Repeater) Reset() {
-	r.current = -1
-	r.child.Reset()
+func (r *Repeater) Reset(ctx *Context) {
+	ctx.clearNodeState(r.id)
+	r.child.Reset(ctx)
 }
 
-// UntilFail 每帧执行子节点一次
-//   - 子节点 Failure → 返回 Success（循环结束）
-//   - 子节点 Running → 返回 Running（等子节点完成）
-//   - 子节点 Success → 返回 Running（下帧再试，不在同一帧内循环）
+// UntilFail 每帧执行子节点一次，Success 后 Reset 子树为下帧做准备。
 type UntilFail struct {
 	child Node
 }
@@ -79,14 +79,14 @@ func (u *UntilFail) Tick(ctx *Context) Status {
 		return Success
 	}
 	if status == Success {
-		u.child.Reset()
+		u.child.Reset(ctx)
 	}
 	return Running
 }
 
-func (u *UntilFail) Reset() { u.child.Reset() }
+func (u *UntilFail) Reset(ctx *Context) { u.child.Reset(ctx) }
 
-// AlwaysSucceed 无论子节点返回什么都返回 Success（Running 除外）
+// AlwaysSucceed 吞掉 Failure，Running 穿透
 type AlwaysSucceed struct {
 	child Node
 }
@@ -102,4 +102,4 @@ func (a *AlwaysSucceed) Tick(ctx *Context) Status {
 	return Success
 }
 
-func (a *AlwaysSucceed) Reset() { a.child.Reset() }
+func (a *AlwaysSucceed) Reset(ctx *Context) { a.child.Reset(ctx) }

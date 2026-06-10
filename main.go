@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-func registerActions(loader *bt.Loader, bb *bt.Blackboard) {
+func registerActions(loader *bt.Loader) {
 
 	// ========== 阶段切换 ==========
 	loader.RegisterAction("enter_phase1", func(ctx *bt.Context) bt.Status {
@@ -50,8 +50,8 @@ func registerActions(loader *bt.Loader, bb *bt.Blackboard) {
 		ctx.BB.Set("_stun_ticks", 0)
 		ctx.BB.Set("stunned", false)
 		return bt.Success
-	}, func() {
-		bb.Set("_stun_ticks", 0)
+	}, func(ctx *bt.Context) {
+		ctx.BB.Set("_stun_ticks", 0)
 	})
 
 	loader.RegisterAction("dodge_roll", func(ctx *bt.Context) bt.Status {
@@ -64,7 +64,7 @@ func registerActions(loader *bt.Loader, bb *bt.Blackboard) {
 		return bt.Success
 	})
 
-	// ========== Phase1: 正常战斗 ==========
+	// ========== Phase1 ==========
 	loader.RegisterAction("patrol", func(_ *bt.Context) bt.Status {
 		fmt.Println("  → 炎魔将军在领地内巡逻...")
 		return bt.Success
@@ -86,11 +86,11 @@ func registerActions(loader *bt.Loader, bb *bt.Blackboard) {
 		ctx.BB.Set("fireball_ready", false)
 		fmt.Println("  → 炎魔将军释放【火球术】! 轰!")
 		return bt.Success
-	}, func() {
-		ticks, _ := bt.Get[int](bb, "_fb_ticks")
+	}, func(ctx *bt.Context) {
+		ticks, _ := bt.Get[int](ctx.BB, "_fb_ticks")
 		if ticks > 0 {
 			fmt.Println("    !! 火球蓄力被打断!")
-			bb.Set("_fb_ticks", 0)
+			ctx.BB.Set("_fb_ticks", 0)
 		}
 	})
 
@@ -107,7 +107,7 @@ func registerActions(loader *bt.Loader, bb *bt.Blackboard) {
 		return bt.Success
 	})
 
-	// ========== Phase2: 狂暴 ==========
+	// ========== Phase2 ==========
 	loader.RegisterAction("summon_minions", func(ctx *bt.Context) bt.Status {
 		fmt.Println("  → 炎魔将军召唤3只火焰小鬼!")
 		ctx.BB.Set("minions_summoned", true)
@@ -141,7 +141,7 @@ func registerActions(loader *bt.Loader, bb *bt.Blackboard) {
 		return bt.Success
 	})
 
-	// ========== Phase3: 残血 ==========
+	// ========== Phase3 ==========
 	loader.RegisterActionWithReset("cast_ultimate", func(ctx *bt.Context) bt.Status {
 		ticks, _ := bt.Get[int](ctx.BB, "_ult_ticks")
 		ticks++
@@ -154,12 +154,12 @@ func registerActions(loader *bt.Loader, bb *bt.Blackboard) {
 		ctx.BB.Set("ultimate_ready", false)
 		fmt.Println("  → 炎魔将军释放【炎灭天地】!!! 全屏毁灭!")
 		return bt.Success
-	}, func() {
-		ticks, _ := bt.Get[int](bb, "_ult_ticks")
+	}, func(ctx *bt.Context) {
+		ticks, _ := bt.Get[int](ctx.BB, "_ult_ticks")
 		if ticks > 0 {
 			fmt.Println("    !! 终极技能蓄力被打断! 技能进入冷却!")
-			bb.Set("_ult_ticks", 0)
-			bb.Set("ultimate_ready", false)
+			ctx.BB.Set("_ult_ticks", 0)
+			ctx.BB.Set("ultimate_ready", false)
 		}
 	})
 
@@ -198,7 +198,7 @@ func main() {
 	ctx := &bt.Context{BB: bb, Bus: bus, Delta: 0.016}
 
 	loader := bt.NewLoader()
-	registerActions(loader, bb)
+	registerActions(loader)
 
 	tree, err := loader.LoadFile("boss_event.json")
 	if err != nil {
@@ -206,7 +206,6 @@ func main() {
 	}
 
 	ticks := []Tick{
-		// ---- Phase 1: 正常战斗 ----
 		{
 			desc: "玩家进入副本, Boss 巡逻",
 			setup: func(bb *bt.Blackboard) {
@@ -227,95 +226,22 @@ func main() {
 				bb.Set("_stun_ticks", 0)
 			},
 		},
-		{
-			desc: "远处发现玩家, 火球就绪, 开始蓄力",
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("player_detected", true)
-				bb.Set("fireball_ready", true)
-			},
-		},
+		{desc: "远处发现玩家, 火球就绪, 开始蓄力", setup: func(bb *bt.Blackboard) { bb.Set("player_detected", true); bb.Set("fireball_ready", true) }},
 		{desc: "(续) 火球蓄力中..."},
-		{
-			desc:   "玩家沉默了 Boss! 火球蓄力被打断!",
-			events: []FrameEvent{{name: "on_silenced"}},
-		},
-		{
-			desc: "火球冷却, 玩家还在远处, 追击",
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("fireball_ready", false)
-			},
-		},
-		{
-			desc: "玩家进入范围, 连击",
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("hp_percent", 90)
-				bb.Set("player_in_range", true)
-			},
-		},
-
-		// ---- Phase 2: 狂暴 ----
-		{
-			desc: "HP 跌破 60%, Phase2! 召唤小怪, 等待小怪就位...",
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("hp_percent", 55)
-				bb.Set("minions_summoned", false)
-			},
-		},
-		{
-			desc:   "事件: 小怪就位! 发起协同攻击!",
-			events: []FrameEvent{{name: "minions_ready", data: 3}},
-		},
-		{
-			desc: "火焰风暴就绪, 释放 AOE",
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("hp_percent", 50)
-				bb.Set("fire_storm_ready", true)
-			},
-		},
-		{
-			desc: "强化连击",
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("hp_percent", 40)
-			},
-		},
-
-		// ---- Phase 3: 残血 + 事件打断 ----
-		{
-			desc: "HP 跌破 20%, Phase3! 终极技能蓄力!",
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("hp_percent", 15)
-				bb.Set("ultimate_ready", true)
-			},
-		},
+		{desc: "玩家沉默了 Boss! 火球蓄力被打断!", events: []FrameEvent{{name: "on_silenced"}}},
+		{desc: "火球冷却, 追击", setup: func(bb *bt.Blackboard) { bb.Set("fireball_ready", false) }},
+		{desc: "玩家进入范围, 连击", setup: func(bb *bt.Blackboard) { bb.Set("hp_percent", 90); bb.Set("player_in_range", true) }},
+		{desc: "HP<60%, Phase2, 召唤小怪", setup: func(bb *bt.Blackboard) { bb.Set("hp_percent", 55); bb.Set("minions_summoned", false) }},
+		{desc: "事件: 小怪就位!", events: []FrameEvent{{name: "minions_ready", data: 3}}},
+		{desc: "火焰风暴", setup: func(bb *bt.Blackboard) { bb.Set("hp_percent", 50); bb.Set("fire_storm_ready", true) }},
+		{desc: "强化连击", setup: func(bb *bt.Blackboard) { bb.Set("hp_percent", 40) }},
+		{desc: "HP<20%, Phase3, 终极蓄力!", setup: func(bb *bt.Blackboard) { bb.Set("hp_percent", 15); bb.Set("ultimate_ready", true) }},
 		{desc: "(续) 终极蓄力中..."},
-		{
-			desc:   "Boss 被眩晕了! ReactiveSelector 抢占, 终极被打断!",
-			events: []FrameEvent{{name: "on_stunned"}},
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("stunned", true)
-			},
-		},
+		{desc: "Boss被眩晕! 终极被打断!", events: []FrameEvent{{name: "on_stunned"}}, setup: func(bb *bt.Blackboard) { bb.Set("stunned", true) }},
 		{desc: "(续) 眩晕中..."},
-		{
-			desc: "眩晕结束, 回血就绪, 逃跑回血",
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("heal_ready", true)
-			},
-		},
-		{
-			desc: "玩家重击! 紧急闪避+反击!",
-			events: []FrameEvent{{name: "on_heavy_hit"}},
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("should_dodge", true)
-			},
-		},
-		{
-			desc: "回血冷却, 玩家在范围, 狂暴连击5次",
-			setup: func(bb *bt.Blackboard) {
-				bb.Set("player_in_range", true)
-				bb.Set("heal_ready", false)
-			},
-		},
+		{desc: "眩晕结束, 逃跑回血", setup: func(bb *bt.Blackboard) { bb.Set("heal_ready", true) }},
+		{desc: "玩家重击! 闪避+反击!", events: []FrameEvent{{name: "on_heavy_hit"}}, setup: func(bb *bt.Blackboard) { bb.Set("should_dodge", true) }},
+		{desc: "狂暴连击5次", setup: func(bb *bt.Blackboard) { bb.Set("player_in_range", true); bb.Set("heal_ready", false) }},
 	}
 
 	for i, tick := range ticks {
@@ -331,7 +257,6 @@ func main() {
 		if tick.setup != nil {
 			tick.setup(bb)
 		}
-
 		status := tree.Tick(ctx)
 		fmt.Printf("  [结果] 树返回: %s\n", status)
 	}

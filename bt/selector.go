@@ -1,41 +1,39 @@
 package bt
 
 // Selector 从左到右尝试子节点（|| 语义，Memory 版本）
-//
-// 子节点返回 Running 后，下次 Tick 从断点恢复，不重新尝试已失败的高优先级分支。
-// 如果需要每帧重新评估优先级，使用 ReactiveSelector。
+// 运行态存在 Context 中。
 type Selector struct {
-	children   []Node
-	runningIdx int
+	id       int
+	children []Node
 }
 
 func NewSelector(children ...Node) *Selector {
-	return &Selector{children: children, runningIdx: -1}
+	return &Selector{id: nextNodeID(), children: children}
 }
 
 func (s *Selector) Tick(ctx *Context) Status {
 	start := 0
-	if s.runningIdx >= 0 {
-		start = s.runningIdx
+	if idx, ok := getNodeState[int](ctx, s.id); ok {
+		start = idx
 	}
 	for i := start; i < len(s.children); i++ {
 		status := s.children[i].Tick(ctx)
 		switch status {
 		case Success:
-			s.runningIdx = -1
+			ctx.clearNodeState(s.id)
 			return Success
 		case Running:
-			s.runningIdx = i
+			ctx.setNodeState(s.id, i)
 			return Running
 		}
 	}
-	s.runningIdx = -1
+	ctx.clearNodeState(s.id)
 	return Failure
 }
 
-func (s *Selector) Reset() {
-	s.runningIdx = -1
+func (s *Selector) Reset(ctx *Context) {
+	ctx.clearNodeState(s.id)
 	for _, child := range s.children {
-		child.Reset()
+		child.Reset(ctx)
 	}
 }

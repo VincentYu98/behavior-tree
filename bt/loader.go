@@ -22,11 +22,9 @@ type NodeConfig struct {
 
 type ActionDef struct {
 	Fn    func(ctx *Context) Status
-	Reset func()
+	Reset func(ctx *Context)
 }
 
-// Loader 从 JSON 构建行为树
-// Context 在运行时传入，Loader 只负责构建阶段
 type Loader struct {
 	actions map[string]ActionDef
 }
@@ -39,7 +37,7 @@ func (l *Loader) RegisterAction(name string, fn func(ctx *Context) Status) {
 	l.actions[name] = ActionDef{Fn: fn}
 }
 
-func (l *Loader) RegisterActionWithReset(name string, fn func(ctx *Context) Status, resetFn func()) {
+func (l *Loader) RegisterActionWithReset(name string, fn func(ctx *Context) Status, resetFn func(ctx *Context)) {
 	l.actions[name] = ActionDef{Fn: fn, Reset: resetFn}
 }
 
@@ -128,76 +126,64 @@ func (l *Loader) build(cfg *NodeConfig) (Node, error) {
 			name = cfg.Action
 		}
 		return NewActionWithReset(name, def.Fn, def.Reset), nil
-
 	case "condition":
 		return NewCondition(cfg.Key, cfg.Op, cfg.Value), nil
-
 	case "sequence":
 		children, err := l.buildChildren(cfg.Children)
 		if err != nil {
 			return nil, fmt.Errorf("sequence %q: %w", cfg.Name, err)
 		}
 		return NewSequence(children...), nil
-
 	case "selector":
 		children, err := l.buildChildren(cfg.Children)
 		if err != nil {
 			return nil, fmt.Errorf("selector %q: %w", cfg.Name, err)
 		}
 		return NewSelector(children...), nil
-
 	case "reactive_selector":
 		children, err := l.buildChildren(cfg.Children)
 		if err != nil {
 			return nil, fmt.Errorf("reactive_selector %q: %w", cfg.Name, err)
 		}
 		return NewReactiveSelector(children...), nil
-
 	case "reactive_sequence":
 		children, err := l.buildChildren(cfg.Children)
 		if err != nil {
 			return nil, fmt.Errorf("reactive_sequence %q: %w", cfg.Name, err)
 		}
 		return NewReactiveSequence(children...), nil
-
 	case "inverter":
 		child, err := l.buildChild(cfg)
 		if err != nil {
 			return nil, err
 		}
 		return NewInverter(child), nil
-
 	case "repeater":
 		child, err := l.buildChild(cfg)
 		if err != nil {
 			return nil, err
 		}
 		return NewRepeater(cfg.Count, child), nil
-
 	case "always_succeed":
 		child, err := l.buildChild(cfg)
 		if err != nil {
 			return nil, err
 		}
 		return NewAlwaysSucceed(child), nil
-
 	case "until_fail":
 		child, err := l.buildChild(cfg)
 		if err != nil {
 			return nil, err
 		}
 		return NewUntilFail(child), nil
-
 	case "interrupt":
 		child, err := l.buildChild(cfg)
 		if err != nil {
 			return nil, err
 		}
 		return NewInterrupt(cfg.Event, child), nil
-
 	case "wait_event":
 		return NewWaitForEvent(cfg.Event, cfg.WriteTo), nil
-
 	default:
 		return nil, fmt.Errorf("unknown node type: %q", cfg.Type)
 	}

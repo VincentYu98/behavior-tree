@@ -1,91 +1,97 @@
 package bt
 
-// ReactiveSelector 响应式选择器
-//
-// 每帧从 child[0] 重新评估。高优先级分支变为可用时，Reset 正在 Running 的低优先级分支。
+// ReactiveSelector 每帧从 child[0] 重新评估，高优先级可抢占 Running 分支。
 type ReactiveSelector struct {
-	children   []Node
-	runningIdx int
+	id       int
+	children []Node
 }
 
 func NewReactiveSelector(children ...Node) *ReactiveSelector {
-	return &ReactiveSelector{children: children, runningIdx: -1}
+	return &ReactiveSelector{id: nextNodeID(), children: children}
 }
 
 func (rs *ReactiveSelector) Tick(ctx *Context) Status {
+	prevRunning, _ := getNodeState[int](ctx, rs.id)
+	hasPrev := false
+	if _, ok := getNodeState[int](ctx, rs.id); ok {
+		hasPrev = true
+	}
+
 	for i, child := range rs.children {
 		status := child.Tick(ctx)
 		switch status {
 		case Success:
-			if rs.runningIdx >= 0 && rs.runningIdx != i {
-				rs.children[rs.runningIdx].Reset()
+			if hasPrev && prevRunning != i {
+				rs.children[prevRunning].Reset(ctx)
 			}
-			rs.runningIdx = -1
+			ctx.clearNodeState(rs.id)
 			return Success
 		case Running:
-			if rs.runningIdx >= 0 && rs.runningIdx != i {
-				rs.children[rs.runningIdx].Reset()
+			if hasPrev && prevRunning != i {
+				rs.children[prevRunning].Reset(ctx)
 			}
-			rs.runningIdx = i
+			ctx.setNodeState(rs.id, i)
 			return Running
 		}
 	}
-	if rs.runningIdx >= 0 {
-		rs.children[rs.runningIdx].Reset()
+	if hasPrev {
+		rs.children[prevRunning].Reset(ctx)
 	}
-	rs.runningIdx = -1
+	ctx.clearNodeState(rs.id)
 	return Failure
 }
 
-func (rs *ReactiveSelector) Reset() {
-	rs.runningIdx = -1
+func (rs *ReactiveSelector) Reset(ctx *Context) {
+	ctx.clearNodeState(rs.id)
 	for _, child := range rs.children {
-		child.Reset()
+		child.Reset(ctx)
 	}
 }
 
-// ReactiveSequence 响应式顺序节点
-//
-// 每帧从 child[0] 重新评估。前置条件失效时，Reset 正在 Running 的后续子节点。
-// 典型用途：Sequence [条件: 玩家在范围, 行为: 攻击]
-//   攻击 Running 时如果玩家离开范围，条件 Failure → Reset 攻击 → 整体 Failure。
+// ReactiveSequence 每帧从 child[0] 重新评估，前置条件失效时中止后续节点。
 type ReactiveSequence struct {
-	children   []Node
-	runningIdx int
+	id       int
+	children []Node
 }
 
 func NewReactiveSequence(children ...Node) *ReactiveSequence {
-	return &ReactiveSequence{children: children, runningIdx: -1}
+	return &ReactiveSequence{id: nextNodeID(), children: children}
 }
 
 func (rs *ReactiveSequence) Tick(ctx *Context) Status {
+	prevRunning, _ := getNodeState[int](ctx, rs.id)
+	hasPrev := false
+	if _, ok := getNodeState[int](ctx, rs.id); ok {
+		hasPrev = true
+	}
+
 	for i, child := range rs.children {
 		status := child.Tick(ctx)
 		switch status {
 		case Failure:
-			if rs.runningIdx >= 0 && rs.runningIdx != i {
-				rs.children[rs.runningIdx].Reset()
+			if hasPrev && prevRunning != i {
+				rs.children[prevRunning].Reset(ctx)
 			}
-			rs.runningIdx = -1
+			ctx.clearNodeState(rs.id)
 			return Failure
 		case Running:
-			if rs.runningIdx >= 0 && rs.runningIdx != i {
-				rs.children[rs.runningIdx].Reset()
+			if hasPrev && prevRunning != i {
+				rs.children[prevRunning].Reset(ctx)
 			}
-			rs.runningIdx = i
+			ctx.setNodeState(rs.id, i)
 			return Running
 		}
 	}
-	if rs.runningIdx >= 0 {
-		rs.children[rs.runningIdx].Reset()
+	if hasPrev {
+		rs.children[prevRunning].Reset(ctx)
 	}
-	rs.runningIdx = -1
+	ctx.clearNodeState(rs.id)
 	return Success
 }
 
-func (rs *ReactiveSequence) Reset() {
-	rs.runningIdx = -1
+func (rs *ReactiveSequence) Reset(ctx *Context) {
+	ctx.clearNodeState(rs.id)
 	for _, child := range rs.children {
-		child.Reset()
+		child.Reset(ctx)
 	}
 }
