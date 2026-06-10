@@ -49,10 +49,7 @@ func (r *Repeater) Tick(ctx *Context) Status {
 			r.current = i
 			return Running
 		default:
-			// Success: 本轮完成，重置子树为下一轮做准备
-			if i < r.count-1 {
-				r.child.Reset()
-			}
+			r.child.Reset()
 		}
 	}
 	r.current = -1
@@ -80,6 +77,9 @@ func (u *UntilFail) Tick(ctx *Context) Status {
 	status := u.child.Tick(ctx)
 	if status == Failure {
 		return Success
+	}
+	if status == Success {
+		u.child.Reset()
 	}
 	return Running
 }

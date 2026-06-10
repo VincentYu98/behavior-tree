@@ -38,9 +38,6 @@ func (rs *ReactiveSelector) Tick(ctx *Context) Status {
 }
 
 func (rs *ReactiveSelector) Reset() {
-	if rs.runningIdx >= 0 {
-		rs.children[rs.runningIdx].Reset()
-	}
 	rs.runningIdx = -1
 	for _, child := range rs.children {
 		child.Reset()
@@ -87,9 +84,6 @@ func (rs *ReactiveSequence) Tick(ctx *Context) Status {
 }
 
 func (rs *ReactiveSequence) Reset() {
-	if rs.runningIdx >= 0 {
-		rs.children[rs.runningIdx].Reset()
-	}
 	rs.runningIdx = -1
 	for _, child := range rs.children {
 		child.Reset()

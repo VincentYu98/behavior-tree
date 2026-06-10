@@ -183,9 +183,9 @@ func TestRepeater_ResetsChildBetweenIterations(t *testing.T) {
 	if s := rep.Tick(ctx); s != Success {
 		t.Fatalf("want Success, got %s", s)
 	}
-	// 3 iterations, reset called between iteration 1→2 and 2→3 (not after last)
-	if resetCount != 2 {
-		t.Fatalf("want 2 resets between iterations, got %d", resetCount)
+	// 3 iterations, each followed by Reset (including last, to leave child clean)
+	if resetCount != 3 {
+		t.Fatalf("want 3 resets (every iteration), got %d", resetCount)
 	}
 }
 
@@ -429,5 +429,109 @@ func TestAlwaysSucceed(t *testing.T) {
 	}
 	if s := NewAlwaysSucceed(statusAction(Running)).Tick(ctx); s != Running {
 		t.Fatalf("Running→Running: got %s", s)
+	}
+}
+
+// ==================== Reset 幂等性回归测试 ====================
+
+// 验证 ReactiveSelector.Reset() 不会对 running 子节点 Reset 两次
+func TestReactiveSelector_ResetNoDoubleReset(t *testing.T) {
+	ctx := testCtx()
+	resetCount := 0
+	child := NewActionWithReset("c", func(_ *Context) Status {
+		return Running
+	}, func() { resetCount++ })
+
+	rs := NewReactiveSelector(statusAction(Failure), child)
+	// child becomes running
+	rs.Tick(ctx)
+	if resetCount != 0 {
+		t.Fatalf("before Reset: want 0 resets, got %d", resetCount)
+	}
+
+	rs.Reset()
+	if resetCount != 1 {
+		t.Fatalf("after Reset: want exactly 1 reset, got %d", resetCount)
+	}
+}
+
+// 验证 ReactiveSequence.Reset() 不会对 running 子节点 Reset 两次
+func TestReactiveSequence_ResetNoDoubleReset(t *testing.T) {
+	ctx := testCtx()
+	resetCount := 0
+	child := NewActionWithReset("c", func(_ *Context) Status {
+		return Running
+	}, func() { resetCount++ })
+
+	rs := NewReactiveSequence(statusAction(Success), child)
+	rs.Tick(ctx)
+
+	rs.Reset()
+	if resetCount != 1 {
+		t.Fatalf("after Reset: want exactly 1 reset, got %d", resetCount)
+	}
+}
+
+// 验证 Repeater 完成后子树是干净的，再次进入不带脏状态
+func TestRepeater_CleanAfterCompletion(t *testing.T) {
+	ctx := testCtx()
+	round := 0
+	child := NewActionWithReset("c", func(_ *Context) Status {
+		round++
+		return Success
+	}, func() { round = 0 })
+
+	rep := NewRepeater(2, child)
+
+	// 第一次运行：2轮，round 被 reset 到 0（最后一轮也 Reset）
+	rep.Tick(ctx)
+	if round != 0 {
+		t.Fatalf("after first run: want round=0 (clean), got %d", round)
+	}
+
+	// 第二次运行：应该从 round=0 开始，不是从上次残留状态
+	rep.Tick(ctx)
+	if round != 0 {
+		t.Fatalf("after second run: want round=0 (clean), got %d", round)
+	}
+}
+
+// 验证 UntilFail 在子节点 Success 后 Reset 子树，下一帧干净启动
+func TestUntilFail_ResetsChildAfterSuccess(t *testing.T) {
+	ctx := testCtx()
+	resetCount := 0
+	callCount := 0
+	child := NewActionWithReset("c", func(_ *Context) Status {
+		callCount++
+		if callCount >= 3 {
+			return Failure
+		}
+		return Success
+	}, func() { resetCount++ })
+
+	uf := NewUntilFail(child)
+
+	// Tick 1: child Success → UntilFail returns Running, should Reset child
+	if s := uf.Tick(ctx); s != Running {
+		t.Fatalf("tick1: want Running, got %s", s)
+	}
+	if resetCount != 1 {
+		t.Fatalf("tick1: want 1 reset after Success round, got %d", resetCount)
+	}
+
+	// Tick 2: child Success → Running, another Reset
+	if s := uf.Tick(ctx); s != Running {
+		t.Fatalf("tick2: want Running, got %s", s)
+	}
+	if resetCount != 2 {
+		t.Fatalf("tick2: want 2 resets, got %d", resetCount)
+	}
+
+	// Tick 3: child Failure → UntilFail returns Success, no extra Reset
+	if s := uf.Tick(ctx); s != Success {
+		t.Fatalf("tick3: want Success, got %s", s)
+	}
+	if resetCount != 2 {
+		t.Fatalf("tick3: want still 2 resets (no reset on Failure exit), got %d", resetCount)
 	}
 }
