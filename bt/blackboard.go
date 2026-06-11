@@ -119,6 +119,18 @@ func fitsInt(f float64, min, max int64) bool {
 	return f >= float64(min) && f <= float64(max)
 }
 
+// Dump 返回黑板全部数据的浅拷贝，用于快照和调试。
+func (b *Blackboard) Dump() map[string]any {
+	if b == nil || b.data == nil {
+		return nil
+	}
+	m := make(map[string]any, len(b.data))
+	for k, v := range b.data {
+		m[k] = v
+	}
+	return m
+}
+
 func asFloat64(v any) (float64, bool) {
 	switch n := v.(type) {
 	case int:

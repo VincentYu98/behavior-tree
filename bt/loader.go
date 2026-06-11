@@ -152,25 +152,41 @@ func (l *Loader) build(cfg *NodeConfig) (Node, error) {
 		if err != nil {
 			return nil, fmt.Errorf("sequence %q: %w", cfg.Name, err)
 		}
-		return NewSequence(children...), nil
+		n := NewSequence(children...)
+		if cfg.Name != "" {
+			n.label = "Sequence[" + cfg.Name + "]"
+		}
+		return n, nil
 	case "selector":
 		children, err := l.buildChildren(cfg.Children)
 		if err != nil {
 			return nil, fmt.Errorf("selector %q: %w", cfg.Name, err)
 		}
-		return NewSelector(children...), nil
+		n := NewSelector(children...)
+		if cfg.Name != "" {
+			n.label = "Selector[" + cfg.Name + "]"
+		}
+		return n, nil
 	case "reactive_selector":
 		children, err := l.buildChildren(cfg.Children)
 		if err != nil {
 			return nil, fmt.Errorf("reactive_selector %q: %w", cfg.Name, err)
 		}
-		return NewReactiveSelector(children...), nil
+		n := NewReactiveSelector(children...)
+		if cfg.Name != "" {
+			n.label = "ReactiveSelector[" + cfg.Name + "]"
+		}
+		return n, nil
 	case "reactive_sequence":
 		children, err := l.buildChildren(cfg.Children)
 		if err != nil {
 			return nil, fmt.Errorf("reactive_sequence %q: %w", cfg.Name, err)
 		}
-		return NewReactiveSequence(children...), nil
+		n := NewReactiveSequence(children...)
+		if cfg.Name != "" {
+			n.label = "ReactiveSequence[" + cfg.Name + "]"
+		}
+		return n, nil
 	case "inverter":
 		child, err := l.buildChild(cfg)
 		if err != nil {

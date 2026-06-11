@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 )
 
@@ -807,5 +808,198 @@ func TestMultiEntity_SharedTree(t *testing.T) {
 	}
 	if v := MustGet[int](ctx1.BB, "count"); v != 1 {
 		t.Fatalf("e1 count: want 1 (inc skipped on resume), got %d", v)
+	}
+}
+
+// ==================== Tracer ====================
+
+func tracedCtx() *Context {
+	return &Context{BB: NewBlackboard(), Bus: NewEventBus(), Tracer: NewTracer()}
+}
+
+func TestTracer_GoldenTrace(t *testing.T) {
+	ctx := tracedCtx()
+	ctx.BB.Set("go", false)
+
+	// Selector [Condition(go), Action(fallback)]
+	tree := NewTree("test", NewSelector(
+		NewSequence(
+			NewCondition("go", "eq", true),
+			NewAction("attack", func(_ *Context) Status { return Success }),
+		),
+		NewAction("patrol", func(_ *Context) Status { return Success }),
+	))
+	exec := tree.NewExecutor(ctx)
+	exec.Tick()
+
+	// 验证 trace 包含关键路径
+	entries := ctx.Tracer.FrameEntries(1)
+	exits := filterExits(entries)
+
+	// Condition 失败 → Sequence 失败 → patrol 成功 → Selector 成功
+	if len(exits) < 4 {
+		t.Fatalf("want >= 4 exit entries, got %d", len(exits))
+	}
+	assertExit(t, exits[0], "Condition(go eq true)", Failure)
+	assertExit(t, exits[1], "Sequence", Failure)
+	assertExit(t, exits[2], "Action(patrol)", Success)
+	assertExit(t, exits[3], "Selector", Success)
+}
+
+func TestTracer_RunningPath(t *testing.T) {
+	ctx := tracedCtx()
+	ctx.BB.Set("_s", 0)
+	tree := NewTree("test", NewSequence(
+		statusAction(Success),
+		bbStepAction("_s", Running, Success),
+	))
+	exec := tree.NewExecutor(ctx)
+	exec.Tick()
+
+	if len(ctx.Tracer.RunningPath) != 2 {
+		t.Fatalf("running path: want 2 nodes, got %v", ctx.Tracer.RunningPath)
+	}
+	if ctx.Tracer.RunningPath[0] != "Sequence" {
+		t.Fatalf("running path[0]: want Sequence, got %s", ctx.Tracer.RunningPath[0])
+	}
+}
+
+func TestTracer_InterruptTrace(t *testing.T) {
+	ctx := tracedCtx()
+	child := NewAction("channel", func(_ *Context) Status { return Running })
+	intr := NewInterrupt("stun", child)
+	tree := NewTree("test", intr)
+	exec := tree.NewExecutor(ctx)
+
+	exec.Tick() // Running
+	ctx.Bus.Emit("stun", nil)
+	exec.Tick() // Interrupted
+
+	// 查找 Interrupt 事件
+	found := false
+	for _, e := range ctx.Tracer.FrameEntries(2) {
+		if e.Type == TraceInterrupt {
+			found = true
+			if e.Detail != "event=stun" {
+				t.Fatalf("interrupt detail: want 'event=stun', got %q", e.Detail)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("should have TraceInterrupt entry")
+	}
+}
+
+func TestTracer_ResetTrace(t *testing.T) {
+	ctx := tracedCtx()
+	child := NewAction("act", func(_ *Context) Status { return Running })
+	tree := NewTree("test", child)
+	exec := tree.NewExecutor(ctx)
+	exec.Tick()
+	exec.Reset()
+
+	found := false
+	for _, e := range ctx.Tracer.Entries {
+		if e.Type == TraceReset && e.Node == "Action(act)" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("should have TraceReset for Action(act)")
+	}
+}
+
+func TestTracer_Snapshot(t *testing.T) {
+	ctx := tracedCtx()
+	ctx.BB.Set("hp", 100)
+	ctx.BB.Set("_s", 0)
+
+	tree := NewTree("boss", bbStepAction("_s", Running, Success))
+	exec := tree.NewExecutor(ctx)
+	exec.Tick()
+
+	snap := exec.Snapshot()
+	if snap.Frame != 1 {
+		t.Fatalf("frame: want 1, got %d", snap.Frame)
+	}
+	if snap.Status != Running {
+		t.Fatalf("status: want Running, got %s", snap.Status)
+	}
+	if snap.BB["hp"] != 100 {
+		t.Fatalf("BB hp: want 100, got %v", snap.BB["hp"])
+	}
+}
+
+func TestTracer_DumpText(t *testing.T) {
+	ctx := tracedCtx()
+	tree := NewTree("test", NewSelector(
+		statusAction(Failure),
+		statusAction(Success),
+	))
+	exec := tree.NewExecutor(ctx)
+	exec.Tick()
+
+	text := ctx.Tracer.DumpFrameText(1)
+	if !strings.Contains(text, "Selector") {
+		t.Fatal("dump should contain Selector")
+	}
+	if !strings.Contains(text, "Success") {
+		t.Fatal("dump should contain Success")
+	}
+}
+
+func TestTracer_DumpJSON(t *testing.T) {
+	ctx := tracedCtx()
+	tree := NewTree("test", statusAction(Success))
+	exec := tree.NewExecutor(ctx)
+	exec.Tick()
+
+	data, err := ctx.Tracer.DumpJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data) == 0 {
+		t.Fatal("JSON dump should not be empty")
+	}
+}
+
+func TestTracer_PreemptTrace(t *testing.T) {
+	ctx := tracedCtx()
+	ctx.BB.Set("_hi", 0)
+
+	tree := NewTree("test", NewReactiveSelector(
+		bbStepAction("_hi", Failure, Success),
+		NewAction("low", func(_ *Context) Status { return Running }),
+	))
+	exec := tree.NewExecutor(ctx)
+	exec.Tick() // hi=Failure, low=Running
+	exec.Tick() // hi=Success, preempt low
+
+	found := false
+	for _, e := range ctx.Tracer.FrameEntries(2) {
+		if e.Type == TracePreempt {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("should have TracePreempt entry")
+	}
+}
+
+// helpers
+func filterExits(entries []TraceEntry) []TraceEntry {
+	var result []TraceEntry
+	for _, e := range entries {
+		if e.Type == TraceExit {
+			result = append(result, e)
+		}
+	}
+	return result
+}
+
+func assertExit(t *testing.T, e TraceEntry, node string, status Status) {
+	t.Helper()
+	if e.Node != node || e.Status != status {
+		t.Fatalf("want Exit(%s=%s), got Exit(%s=%s)", node, status, e.Node, e.Status)
 	}
 }

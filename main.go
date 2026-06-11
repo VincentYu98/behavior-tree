@@ -189,7 +189,8 @@ type Tick struct {
 func main() {
 	bb := bt.NewBlackboard()
 	bus := bt.NewEventBus()
-	ctx := &bt.Context{BB: bb, Bus: bus, Delta: 0.016, Logger: bt.FmtLogger{}}
+	tracer := bt.NewTracer()
+	ctx := &bt.Context{BB: bb, Bus: bus, Delta: 0.016, Logger: bt.FmtLogger{}, Tracer: tracer}
 
 	loader := bt.NewLoader()
 	registerActions(loader)
@@ -250,4 +251,18 @@ func main() {
 
 	fmt.Printf("\n===== 战斗结束 =====\n")
 	fmt.Printf("树名: %s | 总帧数: %d | 最终状态: %s\n", tree.Name(), exec.Ticks(), exec.LastStatus())
+
+	// 打印关键帧的执行路径 trace
+	fmt.Println("\n===== Trace: Frame 4 (沉默打断火球蓄力) =====")
+	fmt.Print(tracer.DumpFrameText(4))
+
+	fmt.Println("\n===== Trace: Frame 13 (眩晕抢占终极技能) =====")
+	fmt.Print(tracer.DumpFrameText(13))
+
+	// 最终快照
+	snap := exec.Snapshot()
+	fmt.Printf("\n===== Snapshot =====\nFrame=%d Status=%s\n", snap.Frame, snap.Status)
+	if snap.RunningPath != nil {
+		fmt.Printf("RunningPath: %s\n", strings.Join(snap.RunningPath, " > "))
+	}
 }

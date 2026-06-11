@@ -30,19 +30,51 @@ func (s Status) String() string {
 //   - Bus:    事件总线，帧内一次性信号（Emit → Poll → Clear）
 //   - Delta:  帧间隔秒数，供需要时间的节点使用
 //   - Logger: 调试输出接口，nil 则静默
+//   - Tracer: 执行追踪器，nil 则不追踪
 //   - ns:     节点运行态（runningIdx 等），框架内部管理，外部不要直接操作
 type Context struct {
 	BB     *Blackboard
 	Bus    *EventBus
 	Delta  float64
 	Logger Logger
+	Tracer *Tracer
 	ns     map[int]any
 }
 
-// Log 通过 Logger 输出调试信息。Logger 为 nil 时静默。
+// Log 通过 Logger 输出调试信息。
 func (ctx *Context) Log(format string, args ...any) {
 	if ctx != nil && ctx.Logger != nil {
 		ctx.Logger.Printf(format, args...)
+	}
+}
+
+func (ctx *Context) traceEnter(label string) {
+	if ctx != nil && ctx.Tracer != nil {
+		ctx.Tracer.enter(label)
+	}
+}
+
+func (ctx *Context) traceExit(label string, status Status) {
+	if ctx != nil && ctx.Tracer != nil {
+		ctx.Tracer.exit(label, status)
+	}
+}
+
+func (ctx *Context) traceReset(label string) {
+	if ctx != nil && ctx.Tracer != nil {
+		ctx.Tracer.reset(label)
+	}
+}
+
+func (ctx *Context) tracePreempt(from, to string) {
+	if ctx != nil && ctx.Tracer != nil {
+		ctx.Tracer.preempt(from, to)
+	}
+}
+
+func (ctx *Context) traceInterrupt(node, event string) {
+	if ctx != nil && ctx.Tracer != nil {
+		ctx.Tracer.interrupt(node, event)
 	}
 }
 

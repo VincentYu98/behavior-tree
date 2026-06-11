@@ -1,16 +1,25 @@
 package bt
 
+import "fmt"
+
 type Condition struct {
 	key   string
 	op    string
 	value any
+	label string
 }
 
 func NewCondition(key, op string, value any) *Condition {
-	return &Condition{key: key, op: op, value: value}
+	return &Condition{
+		key: key, op: op, value: value,
+		label: fmt.Sprintf("Condition(%s %s %v)", key, op, value),
+	}
 }
 
-func (c *Condition) Tick(ctx *Context) Status {
+func (c *Condition) Tick(ctx *Context) (status Status) {
+	ctx.traceEnter(c.label)
+	defer func() { ctx.traceExit(c.label, status) }()
+
 	if ctx == nil || ctx.BB == nil {
 		return Failure
 	}

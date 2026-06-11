@@ -1,18 +1,19 @@
 package bt
 
-// Sequence 从左到右依次执行子节点（&& 语义，Memory 版本）
-// 终态时清自己的 nodeState。子节点在各自返回终态时已清理自身 nodeState。
-// resetFn 仅在 Running 被打断时由父级 Reset 级联调用。
 type Sequence struct {
 	id       int
+	label    string
 	children []Node
 }
 
 func NewSequence(children ...Node) *Sequence {
-	return &Sequence{id: nextNodeID(), children: children}
+	return &Sequence{id: nextNodeID(), label: "Sequence", children: children}
 }
 
-func (s *Sequence) Tick(ctx *Context) Status {
+func (s *Sequence) Tick(ctx *Context) (status Status) {
+	ctx.traceEnter(s.label)
+	defer func() { ctx.traceExit(s.label, status) }()
+
 	start := 0
 	if idx, ok := getNodeState[int](ctx, s.id); ok {
 		start = idx
@@ -33,6 +34,7 @@ func (s *Sequence) Tick(ctx *Context) Status {
 }
 
 func (s *Sequence) Reset(ctx *Context) {
+	ctx.traceReset(s.label)
 	ctx.clearNodeState(s.id)
 	for _, child := range s.children {
 		child.Reset(ctx)

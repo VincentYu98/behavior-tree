@@ -46,8 +46,19 @@ type Executor struct {
 // Tick 驱动行为树做一次决策。
 func (e *Executor) Tick() Status {
 	e.ticks++
+	if e.ctx != nil && e.ctx.Tracer != nil {
+		e.ctx.Tracer.BeginFrame(e.ticks)
+	}
 	e.lastStatus = e.tree.root.Tick(e.ctx)
 	return e.lastStatus
+}
+
+// Snapshot 生成当前状态快照（需启用 Tracer）。
+func (e *Executor) Snapshot() Snapshot {
+	if e.ctx != nil && e.ctx.Tracer != nil {
+		return e.ctx.Tracer.TakeSnapshot(e.ctx, e.lastStatus)
+	}
+	return Snapshot{Status: e.lastStatus}
 }
 
 // Reset 中断当前 Running 子树，级联调用所有节点的 resetFn。

@@ -1,17 +1,21 @@
 package bt
 
-// ReactiveSelector 每帧从 child[0] 重新评估，高优先级可抢占 Running 分支。
-// 终态时只清自己的 nodeState。prevRunning Reset 是正当的打断（Running→放弃），不算双重 Reset。
+import "fmt"
+
 type ReactiveSelector struct {
 	id       int
+	label    string
 	children []Node
 }
 
 func NewReactiveSelector(children ...Node) *ReactiveSelector {
-	return &ReactiveSelector{id: nextNodeID(), children: children}
+	return &ReactiveSelector{id: nextNodeID(), label: "ReactiveSelector", children: children}
 }
 
-func (rs *ReactiveSelector) Tick(ctx *Context) Status {
+func (rs *ReactiveSelector) Tick(ctx *Context) (status Status) {
+	ctx.traceEnter(rs.label)
+	defer func() { ctx.traceExit(rs.label, status) }()
+
 	prevRunning, hasPrev := getNodeState[int](ctx, rs.id)
 
 	for i, child := range rs.children {
@@ -19,12 +23,14 @@ func (rs *ReactiveSelector) Tick(ctx *Context) Status {
 		switch status {
 		case Success:
 			if hasPrev && prevRunning != i {
-				rs.children[prevRunning].Reset(ctx) // 打断旧 Running 分支
+				ctx.tracePreempt(fmt.Sprintf("child[%d]", prevRunning), fmt.Sprintf("child[%d]", i))
+				rs.children[prevRunning].Reset(ctx)
 			}
 			ctx.clearNodeState(rs.id)
 			return Success
 		case Running:
 			if hasPrev && prevRunning != i {
+				ctx.tracePreempt(fmt.Sprintf("child[%d]", prevRunning), fmt.Sprintf("child[%d]", i))
 				rs.children[prevRunning].Reset(ctx)
 			}
 			ctx.setNodeState(rs.id, i)
@@ -32,30 +38,34 @@ func (rs *ReactiveSelector) Tick(ctx *Context) Status {
 		}
 	}
 	if hasPrev {
-		rs.children[prevRunning].Reset(ctx) // 打断旧 Running 分支
+		rs.children[prevRunning].Reset(ctx)
 	}
 	ctx.clearNodeState(rs.id)
 	return Failure
 }
 
 func (rs *ReactiveSelector) Reset(ctx *Context) {
+	ctx.traceReset(rs.label)
 	ctx.clearNodeState(rs.id)
 	for _, child := range rs.children {
 		child.Reset(ctx)
 	}
 }
 
-// ReactiveSequence 每帧从 child[0] 重新评估，前置条件失效时中止后续节点。
 type ReactiveSequence struct {
 	id       int
+	label    string
 	children []Node
 }
 
 func NewReactiveSequence(children ...Node) *ReactiveSequence {
-	return &ReactiveSequence{id: nextNodeID(), children: children}
+	return &ReactiveSequence{id: nextNodeID(), label: "ReactiveSequence", children: children}
 }
 
-func (rs *ReactiveSequence) Tick(ctx *Context) Status {
+func (rs *ReactiveSequence) Tick(ctx *Context) (status Status) {
+	ctx.traceEnter(rs.label)
+	defer func() { ctx.traceExit(rs.label, status) }()
+
 	prevRunning, hasPrev := getNodeState[int](ctx, rs.id)
 
 	for i, child := range rs.children {
@@ -83,6 +93,7 @@ func (rs *ReactiveSequence) Tick(ctx *Context) Status {
 }
 
 func (rs *ReactiveSequence) Reset(ctx *Context) {
+	ctx.traceReset(rs.label)
 	ctx.clearNodeState(rs.id)
 	for _, child := range rs.children {
 		child.Reset(ctx)

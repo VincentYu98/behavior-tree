@@ -3,13 +3,17 @@ package bt
 type WaitForEvent struct {
 	event   string
 	writeTo string
+	label   string
 }
 
 func NewWaitForEvent(event, writeTo string) *WaitForEvent {
-	return &WaitForEvent{event: event, writeTo: writeTo}
+	return &WaitForEvent{event: event, writeTo: writeTo, label: "WaitForEvent(" + event + ")"}
 }
 
-func (w *WaitForEvent) Tick(ctx *Context) Status {
+func (w *WaitForEvent) Tick(ctx *Context) (status Status) {
+	ctx.traceEnter(w.label)
+	defer func() { ctx.traceExit(w.label, status) }()
+
 	if ctx == nil || ctx.Bus == nil {
 		return Failure
 	}

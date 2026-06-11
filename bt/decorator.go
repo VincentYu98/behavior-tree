@@ -1,15 +1,19 @@
 package bt
 
-// Inverter Success ↔ Failure，Running 不变
+import "fmt"
+
 type Inverter struct {
+	label string
 	child Node
 }
 
 func NewInverter(child Node) *Inverter {
-	return &Inverter{child: child}
+	return &Inverter{label: "Inverter", child: child}
 }
 
-func (i *Inverter) Tick(ctx *Context) Status {
+func (i *Inverter) Tick(ctx *Context) (status Status) {
+	ctx.traceEnter(i.label)
+	defer func() { ctx.traceExit(i.label, status) }()
 	switch i.child.Tick(ctx) {
 	case Success:
 		return Failure
@@ -20,23 +24,29 @@ func (i *Inverter) Tick(ctx *Context) Status {
 	}
 }
 
-func (i *Inverter) Reset(ctx *Context) { i.child.Reset(ctx) }
+func (i *Inverter) Reset(ctx *Context) {
+	ctx.traceReset(i.label)
+	i.child.Reset(ctx)
+}
 
-// Repeater 重复执行子节点 N 次。
-// 迭代间 Reset 子树保证每轮干净。最后一轮不调 Reset，保留结果给同帧兄弟。
-// re-entry 的 nodeState 由子节点自身终态清理保证（每个节点返回终态时清自己的 ctx.ns）。
-// resetFn 仅在打断路径调用（Repeater 失败、父级中断等），不在正常完成后调用。
 type Repeater struct {
 	id    int
+	label string
 	count int
 	child Node
 }
 
 func NewRepeater(count int, child Node) *Repeater {
-	return &Repeater{id: nextNodeID(), count: count, child: child}
+	return &Repeater{
+		id: nextNodeID(), count: count, child: child,
+		label: fmt.Sprintf("Repeater(%d)", count),
+	}
 }
 
-func (r *Repeater) Tick(ctx *Context) Status {
+func (r *Repeater) Tick(ctx *Context) (status Status) {
+	ctx.traceEnter(r.label)
+	defer func() { ctx.traceExit(r.label, status) }()
+
 	start := 0
 	if idx, ok := getNodeState[int](ctx, r.id); ok {
 		start = idx
@@ -61,46 +71,57 @@ func (r *Repeater) Tick(ctx *Context) Status {
 }
 
 func (r *Repeater) Reset(ctx *Context) {
+	ctx.traceReset(r.label)
 	ctx.clearNodeState(r.id)
 	r.child.Reset(ctx)
 }
 
-// UntilFail 每帧执行子节点一次，Success 后 Reset 子树为下帧做准备。
 type UntilFail struct {
+	label string
 	child Node
 }
 
 func NewUntilFail(child Node) *UntilFail {
-	return &UntilFail{child: child}
+	return &UntilFail{label: "UntilFail", child: child}
 }
 
-func (u *UntilFail) Tick(ctx *Context) Status {
-	status := u.child.Tick(ctx)
-	if status == Failure {
+func (u *UntilFail) Tick(ctx *Context) (status Status) {
+	ctx.traceEnter(u.label)
+	defer func() { ctx.traceExit(u.label, status) }()
+	s := u.child.Tick(ctx)
+	if s == Failure {
 		return Success
 	}
-	if status == Success {
+	if s == Success {
 		u.child.Reset(ctx)
 	}
 	return Running
 }
 
-func (u *UntilFail) Reset(ctx *Context) { u.child.Reset(ctx) }
+func (u *UntilFail) Reset(ctx *Context) {
+	ctx.traceReset(u.label)
+	u.child.Reset(ctx)
+}
 
-// AlwaysSucceed 吞掉 Failure，Running 穿透
 type AlwaysSucceed struct {
+	label string
 	child Node
 }
 
 func NewAlwaysSucceed(child Node) *AlwaysSucceed {
-	return &AlwaysSucceed{child: child}
+	return &AlwaysSucceed{label: "AlwaysSucceed", child: child}
 }
 
-func (a *AlwaysSucceed) Tick(ctx *Context) Status {
+func (a *AlwaysSucceed) Tick(ctx *Context) (status Status) {
+	ctx.traceEnter(a.label)
+	defer func() { ctx.traceExit(a.label, status) }()
 	if a.child.Tick(ctx) == Running {
 		return Running
 	}
 	return Success
 }
 
-func (a *AlwaysSucceed) Reset(ctx *Context) { a.child.Reset(ctx) }
+func (a *AlwaysSucceed) Reset(ctx *Context) {
+	ctx.traceReset(a.label)
+	a.child.Reset(ctx)
+}
