@@ -41,7 +41,8 @@ func (l *Loader) RegisterActionWithReset(name string, fn func(ctx *Context) Stat
 	l.actions[name] = ActionDef{Fn: fn, Reset: resetFn}
 }
 
-func (l *Loader) LoadFile(path string) (Node, error) {
+// LoadFile 从 JSON 文件构建行为树。
+func (l *Loader) LoadFile(path string) (*Tree, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
@@ -49,7 +50,25 @@ func (l *Loader) LoadFile(path string) (Node, error) {
 	return l.LoadJSON(data)
 }
 
-func (l *Loader) LoadJSON(data []byte) (Node, error) {
+// LoadJSON 从 JSON 数据构建行为树。
+func (l *Loader) LoadJSON(data []byte) (*Tree, error) {
+	var cfg NodeConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse json: %w", err)
+	}
+	root, err := l.build(&cfg)
+	if err != nil {
+		return nil, err
+	}
+	name := cfg.Name
+	if name == "" {
+		name = cfg.Type
+	}
+	return NewTree(name, root), nil
+}
+
+// BuildNode 从 JSON 构建单个节点（用于测试和程序化构建）。
+func (l *Loader) BuildNode(data []byte) (Node, error) {
 	var cfg NodeConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse json: %w", err)

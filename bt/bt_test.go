@@ -2,6 +2,7 @@ package bt
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"testing"
 )
@@ -345,19 +346,26 @@ func TestLoader_EmptyChildren(t *testing.T) {
 func TestLoader_ValidBuild(t *testing.T) {
 	l := NewLoader()
 	l.RegisterAction("noop", func(_ *Context) Status { return Success })
-	cfg := NodeConfig{Type: "sequence", Children: []*NodeConfig{
+	cfg := NodeConfig{Type: "sequence", Name: "test-seq", Children: []*NodeConfig{
 		{Type: "condition", Key: "hp", Op: "lt", Value: 50.0},
 		{Type: "action", Action: "noop"},
 	}}
 	data, _ := json.Marshal(cfg)
-	node, err := l.LoadJSON(data)
+	tree, err := l.LoadJSON(data)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if tree.Name() != "test-seq" {
+		t.Fatalf("tree name: want test-seq, got %s", tree.Name())
+	}
 	ctx := testCtx()
 	ctx.BB.Set("hp", 30)
-	if s := node.Tick(ctx); s != Success {
+	exec := tree.NewExecutor(ctx)
+	if s := exec.Tick(); s != Success {
 		t.Fatalf("want Success, got %s", s)
+	}
+	if exec.Ticks() != 1 {
+		t.Fatalf("want 1 tick, got %d", exec.Ticks())
 	}
 }
 
@@ -645,6 +653,119 @@ func TestStatefulAction_CleansUpBeforeTerminal(t *testing.T) {
 		t.Fatalf("re-entry: want _ch_ticks=1 (fresh start), got %d", v)
 	}
 }
+
+// ==================== Tree / Executor ====================
+
+func TestExecutor_Lifecycle(t *testing.T) {
+	ctx := testCtx()
+	ctx.BB.Set("_step", 0)
+	root := bbStepAction("_step", Running, Success)
+	tree := NewTree("test", root)
+	exec := tree.NewExecutor(ctx)
+
+	if exec.Ticks() != 0 {
+		t.Fatalf("initial ticks: want 0, got %d", exec.Ticks())
+	}
+
+	// Tick 1: Running
+	if s := exec.Tick(); s != Running {
+		t.Fatalf("tick1: want Running, got %s", s)
+	}
+	if !exec.IsRunning() {
+		t.Fatal("should be running")
+	}
+	if exec.Ticks() != 1 {
+		t.Fatalf("ticks: want 1, got %d", exec.Ticks())
+	}
+
+	// Tick 2: Success
+	if s := exec.Tick(); s != Success {
+		t.Fatalf("tick2: want Success, got %s", s)
+	}
+	if exec.IsRunning() {
+		t.Fatal("should not be running")
+	}
+	if exec.LastStatus() != Success {
+		t.Fatalf("last status: want Success, got %s", exec.LastStatus())
+	}
+}
+
+func TestExecutor_Reset(t *testing.T) {
+	ctx := testCtx()
+	resetCalled := false
+	root := NewActionWithReset("a", func(_ *Context) Status {
+		return Running
+	}, func(_ *Context) { resetCalled = true })
+
+	exec := NewTree("test", root).NewExecutor(ctx)
+	exec.Tick() // Running
+	exec.Reset()
+	if !resetCalled {
+		t.Fatal("Reset should cascade to root")
+	}
+}
+
+func TestExecutor_MultiInstance(t *testing.T) {
+	root := NewSequence(
+		NewAction("inc", func(ctx *Context) Status {
+			v, _ := Get[int](ctx.BB, "n")
+			ctx.BB.Set("n", v+1)
+			return Success
+		}),
+		bbStepAction("_s", Running, Success),
+	)
+	tree := NewTree("shared", root)
+
+	ctx1 := testCtx()
+	ctx1.BB.Set("n", 0)
+	ctx1.BB.Set("_s", 0)
+	ctx2 := testCtx()
+	ctx2.BB.Set("n", 0)
+	ctx2.BB.Set("_s", 0)
+
+	e1 := tree.NewExecutor(ctx1)
+	e2 := tree.NewExecutor(ctx2)
+
+	e1.Tick() // Running
+	e2.Tick() // Running (independent)
+	e1.Tick() // Success
+	e2.Tick() // Success
+
+	if v := MustGet[int](ctx1.BB, "n"); v != 1 {
+		t.Fatalf("e1: want n=1, got %d", v)
+	}
+	if v := MustGet[int](ctx2.BB, "n"); v != 1 {
+		t.Fatalf("e2: want n=1, got %d", v)
+	}
+}
+
+// ==================== Logger ====================
+
+func TestContext_Log_NilSafe(t *testing.T) {
+	// nil Logger → no panic
+	ctx := testCtx()
+	ctx.Log("should not panic %d", 42)
+
+	// nil Context → no panic
+	var nilCtx *Context
+	nilCtx.Log("should not panic")
+}
+
+func TestContext_Log_Captures(t *testing.T) {
+	var captured string
+	ctx := testCtx()
+	ctx.Logger = loggerFunc(func(format string, args ...any) {
+		captured = fmt.Sprintf(format, args...)
+	})
+	ctx.Log("hello %d", 42)
+	if captured != "hello 42" {
+		t.Fatalf("want 'hello 42', got %q", captured)
+	}
+}
+
+type loggerFunc func(string, ...any)
+
+func (f loggerFunc) Printf(format string, args ...any) { f(format, args...) }
 
 // ==================== 多实体共享树 ====================
 

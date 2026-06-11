@@ -14,10 +14,17 @@ go run .
 
 ## 框架架构
 
-```
-游戏主循环（每帧）
-  ctx := &bt.Context{BB: bb, Bus: bus, Delta: dt}
-  EventBus.Clear()  →  EventBus.Emit(...)  →  Blackboard.Set(...)  →  tree.Tick(ctx)
+```go
+// 初始化（一次）
+tree, _ := loader.LoadFile("boss.json")   // Tree 是不可变模板
+exec := tree.NewExecutor(ctx)              // Executor 是每实体执行器
+
+// 游戏主循环（每帧）
+ctx.Bus.Clear()
+ctx.Bus.Emit(...)
+ctx.BB.Set(...)
+ctx.Delta = dt
+status := exec.Tick()   // 驱动一次决策
 ```
 
 ### 节点类型
@@ -53,10 +60,13 @@ go run .
 
 | 组件 | 说明 |
 |------|------|
-| `Context` | 执行上下文，携带 BB/Bus/Delta，每帧创建传入 `Tick(ctx)` |
-| `Blackboard` | `map[string]any` 共享黑板，泛型 `Get[T]` / `MustGet[T]` 取值 |
-| `EventBus` | 帧内事件发布/订阅，`Emit` → 节点 `Poll` → 帧末 `Clear` |
-| `Loader` | JSON 加载器，带加载时校验（字段/op/action引用），`RegisterAction` 注册行为 |
+| `Tree` | 不可变树模板，包装根节点 + 名字。可被多个 Executor 共享 |
+| `Executor` | 每实体执行器，管理 Tick/Reset/统计。通过 `tree.NewExecutor(ctx)` 创建 |
+| `Context` | 每实体执行上下文，携带 BB/Bus/Delta/Logger。节点运行态存于 ctx 内部 |
+| `Blackboard` | `map[string]any` 共享黑板，泛型 `Get[T]` / `MustGet[T]`（自动数值互转） |
+| `EventBus` | 帧内事件总线，`Poll` 返回最新事件，`PollAll` 返回全部 |
+| `Logger` | 标准调试输出接口，Action 通过 `ctx.Log()` 输出，nil 则静默 |
+| `Loader` | JSON 加载器，带加载时校验（字段/op/action引用），返回 `*Tree` |
 
 ### Running 断点续跑
 
@@ -109,7 +119,9 @@ ReactiveSelector (根 — 每帧重新评估优先级)
 
 ```
 bt/                     框架层（通用，无业务逻辑）
-├── node.go             Status 枚举 + Node 接口
+├── node.go             Status + Node 接口 + Context（含生命周期文档）
+├── tree.go             Tree（不可变模板）+ Executor（每实体执行器）
+├── logger.go           Logger 接口 + FmtLogger / NilLogger
 ├── action.go           Action 叶子节点
 ├── condition.go        Condition 叶子节点
 ├── wait_event.go       WaitForEvent 叶子节点
@@ -117,14 +129,14 @@ bt/                     框架层（通用，无业务逻辑）
 ├── selector.go         Selector 组合节点
 ├── reactive.go         ReactiveSelector / ReactiveSequence
 ├── decorator.go        Inverter / Repeater / AlwaysSucceed / UntilFail
-├── bt_test.go          25 个单元测试
 ├── interrupt.go        Interrupt 装饰节点
-├── blackboard.go       Blackboard 共享黑板
-├── event.go            EventBus 事件总线
-└── loader.go           JSON 加载器 + Action 注册表
+├── blackboard.go       Blackboard 共享黑板（nil-safe, 数值互转）
+├── event.go            EventBus 事件总线（Poll 最新 / PollAll 全部）
+├── loader.go           JSON 加载器（返回 *Tree，带校验）
+└── bt_test.go          45 个单元测试
 
 boss_event.json         事件驱动版 Boss 行为树配置
-main.go                 Boss 行为实现 + 17帧战斗模拟
+main.go                 Boss 行为实现（使用 Tree/Executor/Logger）
 ```
 
 ## JSON 配置格式
